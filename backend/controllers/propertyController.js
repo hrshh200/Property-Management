@@ -1,9 +1,12 @@
 const jwt = require("jsonwebtoken");
+const mongoose = require("mongoose");
 const User = require("../models/User");
 const Property = require("../models/Property");
 const Lease = require("../models/Lease");
 const RentPayment = require("../models/RentPayment");
 const MaintenanceRequest = require("../models/MaintenanceRequest");
+const MoveOutRequest = require("../models/MoveOutRequest");
+const ComplianceDocument = require("../models/ComplianceDocument");
 const { StatusCodes } = require("http-status-codes");
 
 // ─────────────────────────────────────────────
@@ -481,12 +484,25 @@ const getOwnerDashboard = async (req, res) => {
 const getTenantDashboard = async (req, res) => {
   try {
     const tenantId = req.user.userId;
+    const tenantObjectId = mongoose.Types.ObjectId.createFromHexString(tenantId);
+
     const lease = await Lease.findOne({ tenant: tenantId, isActive: true })
       .populate("property", "propertyType address description numberOfRooms status")
       .populate("owner", "name email phone");
 
-    const pendingRent = await RentPayment.countDocuments({ tenant: tenantId, status: "Pending" });
-    const overdueRent = await RentPayment.countDocuments({ tenant: tenantId, status: "Overdue" });
+    const [pendingAgg, overdueAgg] = await Promise.all([
+      RentPayment.aggregate([
+        { $match: { tenant: tenantObjectId, status: "Pending" } },
+        { $group: { _id: null, total: { $sum: "$amount" } } },
+      ]),
+      RentPayment.aggregate([
+        { $match: { tenant: tenantObjectId, status: "Overdue" } },
+        { $group: { _id: null, total: { $sum: "$amount" } } },
+      ]),
+    ]);
+
+    const pendingRent = pendingAgg[0]?.total || 0;
+    const overdueRent = overdueAgg[0]?.total || 0;
     const openRequests = await MaintenanceRequest.countDocuments({ tenant: tenantId, status: "Open" });
 
     res.status(StatusCodes.OK).json({ lease, stats: { pendingRent, overdueRent, openRequests } });
@@ -524,20 +540,29 @@ const getTenantRentHistory = async (req, res) => {
 
 const createMaintenanceRequest = async (req, res) => {
   try {
-    const { category, description } = req.body;
+    const { category, description, urgency } = req.body;
     if (!category || !description) {
       return res.status(StatusCodes.BAD_REQUEST).json({ message: "Category and description are required." });
     }
+
+    const allowedUrgency = ["Low", "Medium", "High", "Emergency"];
+    const requestUrgency = allowedUrgency.includes(urgency) ? urgency : "Medium";
+
     const lease = await Lease.findOne({ tenant: req.user.userId, isActive: true });
     if (!lease) {
       return res.status(StatusCodes.BAD_REQUEST).json({ message: "No active lease found. Cannot raise request." });
     }
+
+    const photos = (req.files || []).map((file) => `/uploads/maintenance/${file.filename}`);
+
     const request = await MaintenanceRequest.create({
       property: lease.property,
       tenant: req.user.userId,
       owner: lease.owner,
       category,
+      urgency: requestUrgency,
       description,
+      photos,
     });
     res.status(StatusCodes.CREATED).json({ message: "Maintenance request created.", request });
   } catch (err) {
@@ -552,6 +577,350 @@ const getTenantMaintenanceRequests = async (req, res) => {
       .populate("comments.addedBy", "name role")
       .sort({ createdAt: -1 });
     res.status(StatusCodes.OK).json({ requests });
+  } catch (err) {
+    res.status(StatusCodes.INTERNAL_SERVER_ERROR).json({ message: err.message });
+  }
+};
+
+// ─────────────────────────────────────────────
+//  TENANT/OWNER – MOVE OUT REQUESTS
+// ─────────────────────────────────────────────
+
+const createMoveOutRequest = async (req, res) => {
+  try {
+    const { requestedMoveOutDate, reason } = req.body;
+
+    if (!requestedMoveOutDate) {
+      return res.status(StatusCodes.BAD_REQUEST).json({ message: "Requested move-out date is required." });
+    }
+
+    const lease = await Lease.findOne({ tenant: req.user.userId, isActive: true });
+    if (!lease) {
+      return res.status(StatusCodes.BAD_REQUEST).json({ message: "No active lease found." });
+    }
+
+    const moveOutDate = new Date(requestedMoveOutDate);
+    if (Number.isNaN(moveOutDate.getTime())) {
+      return res.status(StatusCodes.BAD_REQUEST).json({ message: "Invalid move-out date." });
+    }
+
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    moveOutDate.setHours(0, 0, 0, 0);
+    if (moveOutDate < today) {
+      return res.status(StatusCodes.BAD_REQUEST).json({ message: "Move-out date cannot be in the past." });
+    }
+
+    const pending = await MoveOutRequest.findOne({ lease: lease._id, status: "Pending" });
+    if (pending) {
+      return res.status(StatusCodes.CONFLICT).json({ message: "You already have a pending move-out request." });
+    }
+
+    const request = await MoveOutRequest.create({
+      lease: lease._id,
+      property: lease.property,
+      tenant: lease.tenant,
+      owner: lease.owner,
+      requestedMoveOutDate: moveOutDate,
+      reason,
+    });
+
+    res.status(StatusCodes.CREATED).json({ message: "Move-out request submitted.", request });
+  } catch (err) {
+    res.status(StatusCodes.INTERNAL_SERVER_ERROR).json({ message: err.message });
+  }
+};
+
+const getTenantMoveOutRequests = async (req, res) => {
+  try {
+    const requests = await MoveOutRequest.find({ tenant: req.user.userId })
+      .populate("property", "propertyType address")
+      .populate("owner", "name email phone")
+      .sort({ createdAt: -1 });
+    res.status(StatusCodes.OK).json({ requests });
+  } catch (err) {
+    res.status(StatusCodes.INTERNAL_SERVER_ERROR).json({ message: err.message });
+  }
+};
+
+const getOwnerMoveOutRequests = async (req, res) => {
+  try {
+    const { status } = req.query;
+    const filter = { owner: req.user.userId };
+    if (status) filter.status = status;
+
+    const requests = await MoveOutRequest.find(filter)
+      .populate("property", "propertyType address")
+      .populate("tenant", "name email phone")
+      .populate("lease", "leaseStartDate leaseEndDate rentAmount")
+      .sort({ createdAt: -1 });
+
+    const leaseIds = requests.map((r) => r.lease?._id).filter(Boolean);
+    let dueMap = new Map();
+
+    if (leaseIds.length > 0) {
+      const outstanding = await RentPayment.aggregate([
+        {
+          $match: {
+            lease: { $in: leaseIds },
+            status: { $in: ["Pending", "Overdue"] },
+          },
+        },
+        {
+          $group: {
+            _id: "$lease",
+            totalAmount: { $sum: "$amount" },
+            count: { $sum: 1 },
+          },
+        },
+      ]);
+
+      dueMap = new Map(outstanding.map((row) => [String(row._id), row]));
+    }
+
+    const enrichedRequests = requests.map((request) => {
+      const leaseId = String(request.lease?._id || "");
+      const due = dueMap.get(leaseId);
+      const outstandingDueCount = due?.count || 0;
+      const outstandingDueAmount = due?.totalAmount || 0;
+
+      return {
+        ...request.toObject(),
+        outstandingDueCount,
+        outstandingDueAmount,
+        canComplete: request.status === "Approved" && outstandingDueCount === 0,
+      };
+    });
+
+    res.status(StatusCodes.OK).json({ requests: enrichedRequests });
+  } catch (err) {
+    res.status(StatusCodes.INTERNAL_SERVER_ERROR).json({ message: err.message });
+  }
+};
+
+const decideMoveOutRequest = async (req, res) => {
+  try {
+    const { status, ownerNote, approvedLastStayingDate, closingFormalities } = req.body;
+
+    if (!["Approved", "Rejected"].includes(status)) {
+      return res.status(StatusCodes.BAD_REQUEST).json({ message: "Status must be Approved or Rejected." });
+    }
+
+    const request = await MoveOutRequest.findOne({ _id: req.params.id, owner: req.user.userId });
+    if (!request) {
+      return res.status(StatusCodes.NOT_FOUND).json({ message: "Move-out request not found." });
+    }
+
+    if (request.status !== "Pending") {
+      return res.status(StatusCodes.BAD_REQUEST).json({ message: "Only pending requests can be updated." });
+    }
+
+    const update = {
+      status,
+      ownerNote: ownerNote || "",
+      decidedAt: new Date(),
+    };
+
+    if (status === "Approved") {
+      if (!approvedLastStayingDate || !closingFormalities) {
+        return res.status(StatusCodes.BAD_REQUEST).json({
+          message: "Last staying date and closing formalities are required for approval.",
+        });
+      }
+
+      const approvedDate = new Date(approvedLastStayingDate);
+      if (Number.isNaN(approvedDate.getTime())) {
+        return res.status(StatusCodes.BAD_REQUEST).json({ message: "Invalid last staying date." });
+      }
+
+      update.approvedLastStayingDate = approvedDate;
+      update.closingFormalities = closingFormalities;
+    }
+
+    const updatedRequest = await MoveOutRequest.findOneAndUpdate(
+      { _id: req.params.id, owner: req.user.userId },
+      update,
+      { new: true }
+    )
+      .populate("property", "propertyType address")
+      .populate("tenant", "name email phone")
+      .populate("lease", "leaseStartDate leaseEndDate rentAmount");
+
+    res.status(StatusCodes.OK).json({ message: "Move-out request updated.", request: updatedRequest });
+  } catch (err) {
+    res.status(StatusCodes.INTERNAL_SERVER_ERROR).json({ message: err.message });
+  }
+};
+
+const completeMoveOutRequest = async (req, res) => {
+  try {
+    const { completionNote } = req.body;
+
+    const request = await MoveOutRequest.findOne({ _id: req.params.id, owner: req.user.userId });
+    if (!request) {
+      return res.status(StatusCodes.NOT_FOUND).json({ message: "Move-out request not found." });
+    }
+
+    if (request.status !== "Approved") {
+      return res.status(StatusCodes.BAD_REQUEST).json({ message: "Only approved move-out requests can be completed." });
+    }
+
+    const outstandingDue = await RentPayment.aggregate([
+      {
+        $match: {
+          lease: request.lease,
+          status: { $in: ["Pending", "Overdue"] },
+        },
+      },
+      {
+        $group: {
+          _id: null,
+          totalAmount: { $sum: "$amount" },
+          count: { $sum: 1 },
+        },
+      },
+    ]);
+
+    const dueCount = outstandingDue[0]?.count || 0;
+    const dueAmount = outstandingDue[0]?.totalAmount || 0;
+
+    if (dueCount > 0) {
+      return res.status(StatusCodes.BAD_REQUEST).json({
+        message: `Cannot complete move-out. ${dueCount} pending/overdue rent record(s) totaling $${Number(dueAmount).toFixed(2)} are still open.`,
+      });
+    }
+
+    await Lease.findOneAndUpdate(
+      { _id: request.lease, owner: req.user.userId, isActive: true },
+      { isActive: false }
+    );
+
+    await Property.findOneAndUpdate(
+      { _id: request.property, owner: req.user.userId },
+      { status: "Vacant" }
+    );
+
+    const updatedRequest = await MoveOutRequest.findOneAndUpdate(
+      { _id: req.params.id, owner: req.user.userId },
+      {
+        status: "Completed",
+        completedAt: new Date(),
+        completionNote: completionNote || "Move-out completed and property handed over.",
+      },
+      { new: true }
+    )
+      .populate("property", "propertyType address")
+      .populate("tenant", "name email phone")
+      .populate("lease", "leaseStartDate leaseEndDate rentAmount");
+
+    res.status(StatusCodes.OK).json({
+      message: "Move-out completed. Lease closed and property marked vacant.",
+      request: updatedRequest,
+    });
+  } catch (err) {
+    res.status(StatusCodes.INTERNAL_SERVER_ERROR).json({ message: err.message });
+  }
+};
+
+// ─────────────────────────────────────────────
+//  OWNER/TENANT – COMPLIANCE DOCUMENTS
+// ─────────────────────────────────────────────
+
+const uploadOwnerComplianceDocument = async (req, res) => {
+  try {
+    const { leaseId, documentType, documentNumber, notes } = req.body;
+    if (!leaseId || !documentType) {
+      return res.status(StatusCodes.BAD_REQUEST).json({ message: "leaseId and documentType are required." });
+    }
+    if (!req.file) {
+      return res.status(StatusCodes.BAD_REQUEST).json({ message: "Document file is required." });
+    }
+
+    const lease = await Lease.findOne({ _id: leaseId, owner: req.user.userId });
+    if (!lease) {
+      return res.status(StatusCodes.NOT_FOUND).json({ message: "Lease not found." });
+    }
+
+    const doc = await ComplianceDocument.create({
+      lease: lease._id,
+      property: lease.property,
+      owner: lease.owner,
+      tenant: lease.tenant,
+      documentType,
+      documentNumber,
+      notes,
+      filePath: `/uploads/compliance/${req.file.filename}`,
+      uploadedByRole: "owner",
+      uploadedBy: req.user.userId,
+    });
+
+    res.status(StatusCodes.CREATED).json({ message: "Document uploaded.", document: doc });
+  } catch (err) {
+    res.status(StatusCodes.INTERNAL_SERVER_ERROR).json({ message: err.message });
+  }
+};
+
+const getOwnerComplianceDocuments = async (req, res) => {
+  try {
+    const { leaseId, tenantId } = req.query;
+    const leaseFilter = { owner: req.user.userId };
+    if (leaseId) leaseFilter._id = leaseId;
+    if (tenantId) leaseFilter.tenant = tenantId;
+
+    const leases = await Lease.find(leaseFilter).select("_id");
+    const leaseIds = leases.map((l) => l._id);
+
+    const documents = await ComplianceDocument.find({ lease: { $in: leaseIds } })
+      .populate("tenant", "name email")
+      .populate("property", "propertyType address")
+      .sort({ createdAt: -1 });
+
+    res.status(StatusCodes.OK).json({ documents });
+  } catch (err) {
+    res.status(StatusCodes.INTERNAL_SERVER_ERROR).json({ message: err.message });
+  }
+};
+
+const uploadTenantComplianceDocument = async (req, res) => {
+  try {
+    const { documentType, documentNumber, notes } = req.body;
+    if (!documentType) {
+      return res.status(StatusCodes.BAD_REQUEST).json({ message: "documentType is required." });
+    }
+    if (!req.file) {
+      return res.status(StatusCodes.BAD_REQUEST).json({ message: "Document file is required." });
+    }
+
+    const lease = await Lease.findOne({ tenant: req.user.userId, isActive: true });
+    if (!lease) {
+      return res.status(StatusCodes.BAD_REQUEST).json({ message: "No active lease found." });
+    }
+
+    const doc = await ComplianceDocument.create({
+      lease: lease._id,
+      property: lease.property,
+      owner: lease.owner,
+      tenant: lease.tenant,
+      documentType,
+      documentNumber,
+      notes,
+      filePath: `/uploads/compliance/${req.file.filename}`,
+      uploadedByRole: "tenant",
+      uploadedBy: req.user.userId,
+    });
+
+    res.status(StatusCodes.CREATED).json({ message: "Document uploaded.", document: doc });
+  } catch (err) {
+    res.status(StatusCodes.INTERNAL_SERVER_ERROR).json({ message: err.message });
+  }
+};
+
+const getTenantComplianceDocuments = async (req, res) => {
+  try {
+    const documents = await ComplianceDocument.find({ tenant: req.user.userId })
+      .populate("property", "propertyType address")
+      .sort({ createdAt: -1 });
+    res.status(StatusCodes.OK).json({ documents });
   } catch (err) {
     res.status(StatusCodes.INTERNAL_SERVER_ERROR).json({ message: err.message });
   }
@@ -595,4 +964,13 @@ module.exports = {
   getTenantRentHistory,
   createMaintenanceRequest,
   getTenantMaintenanceRequests,
+  createMoveOutRequest,
+  getTenantMoveOutRequests,
+  getOwnerMoveOutRequests,
+  decideMoveOutRequest,
+  completeMoveOutRequest,
+  uploadOwnerComplianceDocument,
+  getOwnerComplianceDocuments,
+  uploadTenantComplianceDocument,
+  getTenantComplianceDocuments,
 };

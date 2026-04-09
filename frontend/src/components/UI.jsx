@@ -35,6 +35,9 @@ export const StatusBadge = ({ status }) => {
     Vacant: "badge-gray",
     Active: "badge-green",
     Inactive: "badge-gray",
+    Approved: "badge-green",
+    Rejected: "badge-red",
+    Completed: "badge-blue",
   };
   return <span className={map[status] || "badge-gray"}>{status}</span>;
 };

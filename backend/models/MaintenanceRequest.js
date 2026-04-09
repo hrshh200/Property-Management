@@ -10,7 +10,13 @@ const maintenanceRequestSchema = new mongoose.Schema(
       enum: ["Electric", "Plumbing", "General", "Carpentry", "Painting", "Other"],
       required: true,
     },
+    urgency: {
+      type: String,
+      enum: ["Low", "Medium", "High", "Emergency"],
+      default: "Medium",
+    },
     description: { type: String, required: true, trim: true },
+    photos: [{ type: String, trim: true }],
     status: {
       type: String,
       enum: ["Open", "In Progress", "Resolved"],

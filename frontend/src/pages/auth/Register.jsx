@@ -2,9 +2,19 @@ import React, { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useDispatch } from "react-redux";
 import toast from "react-hot-toast";
-import { Building2, Eye, EyeOff } from "lucide-react";
+import {
+  Building2, Eye, EyeOff, ArrowLeft, CheckCircle2,
+  BarChart3, Shield, Bell,
+} from "lucide-react";
 import api from "../../utils/api";
 import { setCredentials } from "../../app/slices/authSlice";
+
+const PERKS = [
+  { icon: BarChart3, text: "Visual rent & occupancy analytics" },
+  { icon: Bell,      text: "Instant maintenance notifications" },
+  { icon: Shield,    text: "Secure role-based access control" },
+  { icon: CheckCircle2, text: "Free forever — no hidden fees" },
+];
 
 const Register = () => {
   const dispatch = useDispatch();
@@ -31,63 +41,118 @@ const Register = () => {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 to-indigo-100 px-4 py-8">
-      <div className="w-full max-w-md">
-        <div className="text-center mb-8">
-          <div className="inline-flex items-center justify-center w-16 h-16 bg-blue-600 rounded-2xl mb-4 shadow-lg">
-            <Building2 className="w-9 h-9 text-white" />
-          </div>
-          <h1 className="text-3xl font-bold text-gray-900">PropManager</h1>
-          <p className="text-gray-500 mt-1">Create your account</p>
+    <div className="min-h-screen flex flex-col lg:flex-row">
+
+      {/* ── LEFT PANEL ── */}
+      <div className="hidden lg:flex lg:w-5/12 flex-col justify-between bg-gradient-to-br from-indigo-700 via-purple-800 to-blue-900 p-12 relative overflow-hidden">
+        <div className="absolute top-0 right-0 w-72 h-72 bg-purple-400/20 rounded-full -translate-y-1/2 translate-x-1/2 blur-2xl pointer-events-none" />
+        <div className="absolute bottom-0 left-0 w-56 h-56 bg-blue-400/20 rounded-full translate-y-1/2 -translate-x-1/2 blur-2xl pointer-events-none" />
+
+        <div className="relative">
+          <Link to="/" className="inline-flex items-center gap-2.5 group">
+            <div className="p-2 bg-white/20 rounded-xl group-hover:bg-white/30 transition-colors">
+              <Building2 size={24} className="text-white" />
+            </div>
+            <span className="text-white font-bold text-xl">PropManager</span>
+          </Link>
         </div>
 
-        <div className="card">
-          <h2 className="text-xl font-semibold text-gray-800 mb-6">Create Account</h2>
+        <div className="relative space-y-8">
+          <div>
+            <h2 className="text-4xl font-extrabold text-white leading-tight">
+              Join thousands of<br />property owners.
+            </h2>
+            <p className="text-purple-200 mt-3 text-base leading-relaxed max-w-sm">
+              Create your free account and start managing properties, tenants and rent in minutes.
+            </p>
+          </div>
+          <ul className="space-y-4">
+            {PERKS.map(({ icon: Icon, text }) => (
+              <li key={text} className="flex items-center gap-3">
+                <div className="w-8 h-8 bg-white/15 rounded-lg flex items-center justify-center shrink-0">
+                  <Icon size={16} className="text-purple-300" />
+                </div>
+                <span className="text-purple-100 text-sm">{text}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+
+        <div className="relative grid grid-cols-2 gap-3">
+          {[
+            { value: "1,200+", label: "Properties" },
+            { value: "850+",   label: "Tenants" },
+            { value: "98%",    label: "Rent On-Time" },
+            { value: "Free",   label: "Forever" },
+          ].map((s) => (
+            <div key={s.label} className="bg-white/10 rounded-xl p-3 border border-white/15 text-center">
+              <p className="text-white font-extrabold text-lg">{s.value}</p>
+              <p className="text-purple-300 text-xs">{s.label}</p>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* ── RIGHT PANEL ── */}
+      <div className="flex-1 flex flex-col justify-center items-center px-6 py-10 bg-white overflow-y-auto">
+        <div className="w-full max-w-md mb-6">
+          <Link to="/" className="inline-flex items-center gap-1.5 text-sm text-gray-500 hover:text-blue-600 transition-colors">
+            <ArrowLeft size={15} /> Back to home
+          </Link>
+        </div>
+
+        <div className="lg:hidden flex flex-col items-center mb-6">
+          <div className="w-14 h-14 bg-blue-600 rounded-2xl flex items-center justify-center mb-3 shadow-lg">
+            <Building2 size={28} className="text-white" />
+          </div>
+          <h1 className="text-2xl font-bold text-gray-900">PropManager</h1>
+        </div>
+
+        <div className="w-full max-w-md">
+          <div className="mb-7">
+            <h2 className="text-3xl font-extrabold text-gray-900">Create your account</h2>
+            <p className="text-gray-500 mt-2 text-sm">Free to get started. No credit card required.</p>
+          </div>
+
+          {/* Role selector */}
+          <div className="grid grid-cols-2 gap-3 mb-6">
+            {[
+              { value: "owner",  label: "Property Owner", sub: "Manage properties" },
+              { value: "tenant", label: "Tenant",         sub: "View my lease" },
+            ].map((r) => (
+              <button
+                key={r.value}
+                type="button"
+                onClick={() => setForm({ ...form, role: r.value })}
+                className={`p-3 rounded-xl border-2 text-left transition-all duration-200 ${
+                  form.role === r.value
+                    ? "border-blue-600 bg-blue-50"
+                    : "border-gray-200 hover:border-gray-300"
+                }`}
+              >
+                <p className={`text-sm font-semibold ${form.role === r.value ? "text-blue-700" : "text-gray-700"}`}>{r.label}</p>
+                <p className="text-xs text-gray-400 mt-0.5">{r.sub}</p>
+              </button>
+            ))}
+          </div>
+
           <form onSubmit={handleSubmit} className="space-y-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Full Name</label>
-              <input
-                type="text"
-                name="name"
-                value={form.name}
-                onChange={handleChange}
-                required
-                placeholder="John Doe"
-                className="input-field"
-              />
+            <div className="grid grid-cols-2 gap-4">
+              <div className="col-span-2 sm:col-span-1">
+                <label className="block text-sm font-semibold text-gray-700 mb-1.5">Full Name</label>
+                <input type="text" name="name" value={form.name} onChange={handleChange} required placeholder="John Doe" className="input-field" />
+              </div>
+              <div className="col-span-2 sm:col-span-1">
+                <label className="block text-sm font-semibold text-gray-700 mb-1.5">Phone</label>
+                <input type="tel" name="phone" value={form.phone} onChange={handleChange} placeholder="+91 9876543210" className="input-field" />
+              </div>
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
-              <input
-                type="email"
-                name="email"
-                value={form.email}
-                onChange={handleChange}
-                required
-                placeholder="you@example.com"
-                className="input-field"
-              />
+              <label className="block text-sm font-semibold text-gray-700 mb-1.5">Email address</label>
+              <input type="email" name="email" value={form.email} onChange={handleChange} required placeholder="you@example.com" className="input-field" />
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Phone</label>
-              <input
-                type="tel"
-                name="phone"
-                value={form.phone}
-                onChange={handleChange}
-                placeholder="+91 9876543210"
-                className="input-field"
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Role</label>
-              <select name="role" value={form.role} onChange={handleChange} className="input-field">
-                <option value="owner">Property Owner</option>
-                <option value="tenant">Tenant</option>
-              </select>
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Password</label>
+              <label className="block text-sm font-semibold text-gray-700 mb-1.5">Password</label>
               <div className="relative">
                 <input
                   type={showPassword ? "text" : "password"}
@@ -99,25 +164,41 @@ const Register = () => {
                   placeholder="Min 6 characters"
                   className="input-field pr-10"
                 />
-                <button
-                  type="button"
-                  onClick={() => setShowPassword(!showPassword)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
-                >
+                <button type="button" onClick={() => setShowPassword(!showPassword)} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600">
                   {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
                 </button>
               </div>
             </div>
-            <button type="submit" disabled={loading} className="btn-primary w-full py-2.5 mt-2">
-              {loading ? "Creating account..." : "Register"}
+
+            <button
+              type="submit"
+              disabled={loading}
+              className="btn-primary w-full py-3 text-base font-semibold rounded-xl transition-all duration-200 hover:shadow-lg hover:shadow-blue-500/25 disabled:opacity-60 disabled:cursor-not-allowed mt-2"
+            >
+              {loading ? (
+                <span className="flex items-center justify-center gap-2">
+                  <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24" fill="none">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+                  </svg>
+                  Creating account...
+                </span>
+              ) : "Create Account"}
             </button>
           </form>
-          <p className="text-center text-sm text-gray-500 mt-4">
-            Already have an account?{" "}
-            <Link to="/login" className="text-blue-600 hover:underline font-medium">
-              Sign in
-            </Link>
-          </p>
+
+          <div className="relative flex items-center my-5">
+            <div className="flex-grow border-t border-gray-200" />
+            <span className="px-4 text-xs text-gray-400 bg-white">Already have an account?</span>
+            <div className="flex-grow border-t border-gray-200" />
+          </div>
+
+          <Link
+            to="/login"
+            className="flex items-center justify-center w-full border-2 border-gray-200 hover:border-blue-300 hover:bg-blue-50 text-gray-700 font-semibold py-3 rounded-xl transition-all duration-200 text-sm"
+          >
+            Sign in instead
+          </Link>
         </div>
       </div>
     </div>

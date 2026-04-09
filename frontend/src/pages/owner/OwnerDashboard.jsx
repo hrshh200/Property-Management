@@ -1,21 +1,221 @@
 import React, { useEffect, useState } from "react";
-import { Building2, Users, DollarSign, Wrench, MapPin, TrendingUp } from "lucide-react";
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend } from "recharts";
-import { StatCard, PageHeader } from "../../components/UI";
+import { useNavigate } from "react-router-dom";
+import {
+  Building2,
+  Users,
+  DollarSign,
+  Wrench,
+  MapPin,
+  TrendingUp,
+  Wallet,
+  AlertTriangle,
+  ClipboardList,
+  ArrowUpRight,
+  Home,
+  CircleDollarSign,
+  ShieldAlert,
+  BellRing,
+  Clock3,
+  Siren,
+  ScrollText,
+  ShieldCheck,
+  FileText,
+} from "lucide-react";
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from "recharts";
+import { PageHeader } from "../../components/UI";
 import api from "../../utils/api";
+import { formatCurrency } from "../../utils/currency";
 import toast from "react-hot-toast";
 
 const COLORS = ["#3b82f6", "#10b981", "#f59e0b", "#ef4444"];
 
+const MetricCard = ({ title, value, subtitle, icon: Icon, accent = "blue" }) => {
+  const accentMap = {
+    blue: "from-blue-500 to-indigo-500",
+    green: "from-emerald-500 to-green-500",
+    amber: "from-amber-500 to-orange-500",
+    rose: "from-rose-500 to-red-500",
+    violet: "from-violet-500 to-purple-500",
+    slate: "from-slate-500 to-slate-600",
+  };
+
+  return (
+    <div className="relative overflow-hidden rounded-2xl border border-gray-100 bg-white p-5 shadow-sm hover:shadow-lg transition-all duration-300">
+      <div className="absolute -right-6 -top-6 h-20 w-20 rounded-full bg-gray-100/80" />
+      <div className="relative flex items-start justify-between">
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-wider text-gray-500">{title}</p>
+          <p className="mt-2 text-3xl font-extrabold text-gray-900">{value}</p>
+          {subtitle && <p className="mt-1 text-xs text-gray-500">{subtitle}</p>}
+        </div>
+        <div className={`rounded-xl bg-gradient-to-br p-2.5 text-white shadow ${accentMap[accent] || accentMap.blue}`}>
+          <Icon size={18} />
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const ProgressStat = ({ label, value, tone = "blue", icon: Icon, helper }) => {
+  const clamped = Math.max(0, Math.min(100, value || 0));
+  const toneMap = {
+    blue: "bg-blue-500",
+    green: "bg-green-500",
+    amber: "bg-amber-500",
+    red: "bg-red-500",
+  };
+  const iconToneMap = {
+    blue: "bg-blue-100 text-blue-600",
+    green: "bg-green-100 text-green-600",
+    amber: "bg-amber-100 text-amber-600",
+    red: "bg-red-100 text-red-600",
+  };
+
+  return (
+    <div className="rounded-xl border border-gray-100 bg-gray-50/70 p-3">
+      <div className="mb-2 flex items-start justify-between gap-3">
+        <div className="flex items-start gap-2.5">
+          <div className={`mt-0.5 rounded-lg p-1.5 ${iconToneMap[tone] || iconToneMap.blue}`}>
+            {Icon ? <Icon size={14} /> : null}
+          </div>
+          <div>
+            <p className="text-sm font-semibold text-gray-800">{label}</p>
+            {helper && <p className="text-xs text-gray-500">{helper}</p>}
+          </div>
+        </div>
+        <span className="text-sm font-bold text-gray-900">{clamped.toFixed(0)}%</span>
+      </div>
+      <div className="h-2 rounded-full bg-gray-100">
+        <div
+          className={`h-2 rounded-full transition-all duration-500 ${toneMap[tone] || toneMap.blue}`}
+          style={{ width: `${clamped}%` }}
+        />
+      </div>
+    </div>
+  );
+};
+
 const OwnerDashboard = () => {
+  const API_BASE = (import.meta.env.VITE_API_URL || "http://localhost:5000/api").replace(/\/api\/?$/, "");
+  const navigate = useNavigate();
   const [stats, setStats] = useState(null);
+  const [alerts, setAlerts] = useState([]);
+  const [recentComplianceDocs, setRecentComplianceDocs] = useState([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     const fetchStats = async () => {
       try {
-        const { data } = await api.get("/owner/dashboard");
+        const [{ data }, { data: leaseData }, { data: rentData }, { data: maintenanceData }, { data: complianceData }] = await Promise.all([
+          api.get("/owner/dashboard"),
+          api.get("/owner/leases"),
+          api.get("/owner/rent"),
+          api.get("/owner/maintenance"),
+          api.get("/owner/compliance-documents"),
+        ]);
+
         setStats(data.stats);
+
+        const today = new Date();
+        const within30Days = new Date();
+        within30Days.setDate(today.getDate() + 30);
+        const within7Days = new Date();
+        within7Days.setDate(today.getDate() + 7);
+
+        const leases = leaseData?.leases || [];
+        const rents = rentData?.rents || [];
+        const requests = maintenanceData?.requests || [];
+        const documents = complianceData?.documents || [];
+
+        const expiringLeases = leases.filter((lease) => {
+          const endDate = new Date(lease.leaseEndDate);
+          return endDate >= today && endDate <= within30Days;
+        });
+
+        const overdueRents = rents.filter((rent) => rent.status === "Overdue");
+        const dueSoonRents = rents.filter((rent) => {
+          if (rent.status !== "Pending") return false;
+          const dueDate = new Date(rent.dueDate);
+          return dueDate >= today && dueDate <= within7Days;
+        });
+
+        const emergencyRequests = requests.filter((req) =>
+          ["Open", "In Progress"].includes(req.status) && ["Emergency", "High"].includes(req.urgency)
+        );
+
+        const nextAlerts = [];
+
+        if (overdueRents.length > 0) {
+          const overdueAmount = overdueRents.reduce((sum, rent) => sum + Number(rent.amount || 0), 0);
+          nextAlerts.push({
+            id: "overdue-rent",
+            tone: "red",
+            icon: Siren,
+            title: `${overdueRents.length} overdue rent record${overdueRents.length > 1 ? "s" : ""}`,
+            detail: `${formatCurrency(overdueAmount)} requires immediate follow-up.`,
+            actionLabel: "View Rent",
+            onAction: () => navigate("/owner/rent"),
+          });
+        }
+
+        if (expiringLeases.length > 0) {
+          nextAlerts.push({
+            id: "expiring-leases",
+            tone: "amber",
+            icon: ScrollText,
+            title: `${expiringLeases.length} lease${expiringLeases.length > 1 ? "s" : ""} ending in 30 days`,
+            detail: "Prepare renewals or occupancy planning before end dates.",
+            actionLabel: "Open Leases",
+            onAction: () => navigate("/owner/tenants"),
+          });
+        }
+
+        if (dueSoonRents.length > 0) {
+          nextAlerts.push({
+            id: "due-soon-rent",
+            tone: "blue",
+            icon: Clock3,
+            title: `${dueSoonRents.length} rent payment${dueSoonRents.length > 1 ? "s are" : " is"} due within 7 days`,
+            detail: "Send reminders early to improve collection rates.",
+            actionLabel: "Check Due Rent",
+            onAction: () => navigate("/owner/rent"),
+          });
+        }
+
+        if (emergencyRequests.length > 0) {
+          nextAlerts.push({
+            id: "urgent-maintenance",
+            tone: "violet",
+            icon: BellRing,
+            title: `${emergencyRequests.length} high-priority maintenance request${emergencyRequests.length > 1 ? "s" : ""}`,
+            detail: "Urgent tenant issues are waiting for action.",
+            actionLabel: "Open Maintenance",
+            onAction: () => navigate("/owner/maintenance"),
+          });
+        }
+
+        const tenantUploadedRecently = documents.filter((doc) => {
+          if (doc.uploadedByRole !== "tenant") return false;
+          const uploadedAt = new Date(doc.createdAt);
+          const daysDiff = (today.getTime() - uploadedAt.getTime()) / (1000 * 60 * 60 * 24);
+          return daysDiff <= 7;
+        });
+
+        if (tenantUploadedRecently.length > 0) {
+          nextAlerts.push({
+            id: "tenant-docs",
+            tone: "blue",
+            icon: ShieldCheck,
+            title: `${tenantUploadedRecently.length} new tenant compliance upload${tenantUploadedRecently.length > 1 ? "s" : ""}`,
+            detail: "Review recently uploaded rent agreement/KYC documents.",
+            actionLabel: "Open Leases",
+            onAction: () => navigate("/owner/tenants"),
+          });
+        }
+
+        setRecentComplianceDocs(documents.slice(0, 6));
+
+        setAlerts(nextAlerts);
       } catch {
         toast.error("Failed to load dashboard.");
       } finally {
@@ -42,56 +242,223 @@ const OwnerDashboard = () => {
       ]
     : [];
 
+  const totalUnits = (stats?.occupiedProperties || 0) + (stats?.vacantProperties || 0);
+  const occupancyRate = totalUnits > 0 ? ((stats?.occupiedProperties || 0) / totalUnits) * 100 : 0;
+  const pendingRent = Number(stats?.pendingRent || 0);
+  const overdueRent = Number(stats?.overdueRent || 0);
+  const paidRent = Number(stats?.totalPaidAmount || 0);
+  const totalRentVolume = paidRent + pendingRent + overdueRent;
+  const collectionRate = totalRentVolume > 0 ? (paidRent / totalRentVolume) * 100 : 0;
+  const overdueRate = totalRentVolume > 0 ? (overdueRent / totalRentVolume) * 100 : 0;
+
   return (
-    <div>
+    <div className="space-y-8">
       <PageHeader
         title="Dashboard"
         subtitle="Welcome back! Here's an overview of your properties."
       />
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 mb-8">
-        <StatCard title="Total Properties" value={stats?.totalProperties || 0} icon={Building2} color="blue" />
-        <StatCard title="Active Leases" value={stats?.activeLeases || 0} icon={Users} color="green" />
-        <StatCard title="Pending Rent" value={stats?.pendingRent || 0} icon={DollarSign} color="yellow" />
-        <StatCard title="Open Requests" value={stats?.openMaintenanceRequests || 0} icon={Wrench} color="red" />
+      <section className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-slate-900 via-blue-900 to-indigo-900 px-6 py-7 sm:px-8 sm:py-8 shadow-xl">
+        <div className="absolute -top-10 -right-10 h-32 w-32 rounded-full bg-blue-400/30 blur-2xl" />
+        <div className="absolute -bottom-12 -left-12 h-36 w-36 rounded-full bg-indigo-400/20 blur-2xl" />
+        <div className="relative grid grid-cols-1 gap-6 md:grid-cols-3">
+          <div className="md:col-span-2">
+            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-blue-200">Portfolio Snapshot</p>
+            <h2 className="mt-2 text-2xl font-extrabold text-white sm:text-3xl">Your property business at a glance</h2>
+            <p className="mt-2 max-w-xl text-sm text-blue-100">
+              Stay on top of occupancy, rent collection and maintenance with live indicators and actionable data.
+            </p>
+          </div>
+          <div className="rounded-2xl border border-white/20 bg-white/10 p-4 backdrop-blur">
+            <p className="text-xs font-semibold uppercase tracking-wider text-blue-100">Total Collection</p>
+            <p className="mt-2 text-3xl font-extrabold text-white">{formatCurrency(paidRent)}</p>
+            <p className="mt-1 flex items-center gap-1 text-xs text-emerald-300">
+              <ArrowUpRight size={14} /> collection rate {collectionRate.toFixed(0)}%
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <MetricCard title="Total Properties" value={stats?.totalProperties || 0} subtitle="Across all locations" icon={Building2} accent="blue" />
+        <MetricCard title="Active Leases" value={stats?.activeLeases || 0} subtitle="Tenant agreements running" icon={Users} accent="green" />
+        <MetricCard title="Pending Rent" value={formatCurrency(pendingRent)} subtitle="Awaiting payment" icon={Wallet} accent="amber" />
+        <MetricCard title="Open Requests" value={stats?.openMaintenanceRequests || 0} subtitle="Maintenance to resolve" icon={Wrench} accent="rose" />
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4 mb-8">
-        <StatCard title="Occupied" value={stats?.occupiedProperties || 0} icon={Building2} color="purple" />
-        <StatCard title="Vacant" value={stats?.vacantProperties || 0} icon={MapPin} color="gray" />
-        <StatCard title="Overdue Rent" value={stats?.overdueRent || 0} icon={DollarSign} color="red" />
-        <StatCard
-          title="Total Collected"
-          value={`₹${(stats?.totalPaidAmount || 0).toLocaleString()}`}
-          icon={TrendingUp}
-          color="green"
-        />
+      <section className="rounded-2xl border border-gray-100 bg-white p-5 shadow-sm">
+        <div className="mb-4 flex items-center justify-between">
+          <h3 className="flex items-center gap-2 text-base font-semibold text-gray-900">
+            <BellRing size={18} className="text-blue-600" /> Smart Alerts
+          </h3>
+          <span className="text-xs font-semibold uppercase tracking-wider text-gray-500">
+            {alerts.length} active
+          </span>
+        </div>
+
+        {alerts.length === 0 ? (
+          <div className="rounded-xl border border-emerald-100 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">
+            No critical alerts right now. Portfolio health looks good.
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+            {alerts.map((alert) => {
+              const Icon = alert.icon;
+              const toneClasses = {
+                red: "border-red-100 bg-red-50 text-red-700",
+                amber: "border-amber-100 bg-amber-50 text-amber-700",
+                blue: "border-blue-100 bg-blue-50 text-blue-700",
+                violet: "border-violet-100 bg-violet-50 text-violet-700",
+              };
+
+              return (
+                <div key={alert.id} className="rounded-xl border border-gray-100 p-4">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="flex items-start gap-3">
+                      <div className={`rounded-lg p-2 ${toneClasses[alert.tone] || toneClasses.blue}`}>
+                        <Icon size={16} />
+                      </div>
+                      <div>
+                        <p className="text-sm font-semibold text-gray-900">{alert.title}</p>
+                        <p className="mt-1 text-xs text-gray-600">{alert.detail}</p>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={alert.onAction}
+                      className="rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-semibold text-gray-700 hover:bg-gray-50"
+                    >
+                      {alert.actionLabel}
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </section>
+
+      <section className="rounded-2xl border border-gray-100 bg-white p-5 shadow-sm">
+        <div className="mb-4 flex items-center justify-between">
+          <h3 className="flex items-center gap-2 text-base font-semibold text-gray-900">
+            <ShieldCheck size={18} className="text-emerald-600" /> Recent Compliance Uploads
+          </h3>
+          <button
+            type="button"
+            onClick={() => navigate("/owner/tenants")}
+            className="rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-semibold text-gray-700 hover:bg-gray-50"
+          >
+            Manage Docs
+          </button>
+        </div>
+
+        {recentComplianceDocs.length === 0 ? (
+          <div className="rounded-xl border border-gray-100 bg-gray-50 px-4 py-3 text-sm text-gray-600">
+            No compliance documents uploaded yet.
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+            {recentComplianceDocs.map((doc) => (
+              <a
+                key={doc._id}
+                href={`${API_BASE}${doc.filePath}`}
+                target="_blank"
+                rel="noreferrer"
+                className="rounded-xl border border-gray-100 p-3 hover:bg-gray-50"
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-semibold text-gray-900 inline-flex items-center gap-1.5">
+                      <FileText size={14} className="text-blue-600" /> {doc.documentType}
+                    </p>
+                    <p className="mt-1 text-xs text-gray-600">
+                      {doc.tenant?.name || "Tenant"} - {doc.property?.address?.city || "N/A"}
+                    </p>
+                    <p className="text-xs text-gray-500">Uploaded on {new Date(doc.createdAt).toLocaleDateString()}</p>
+                  </div>
+                  <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-full border ${doc.uploadedByRole === "tenant" ? "border-blue-200 bg-blue-50 text-blue-700" : "border-emerald-200 bg-emerald-50 text-emerald-700"}`}>
+                    {doc.uploadedByRole === "tenant" ? "Tenant" : "Owner"}
+                  </span>
+                </div>
+              </a>
+            ))}
+          </div>
+        )}
+      </section>
+
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+        <MetricCard title="Occupied Units" value={stats?.occupiedProperties || 0} subtitle="Currently rented" icon={Building2} accent="violet" />
+        <MetricCard title="Vacant Units" value={stats?.vacantProperties || 0} subtitle="Ready for lease" icon={MapPin} accent="slate" />
+        <MetricCard title="Overdue Rent" value={formatCurrency(overdueRent)} subtitle="Needs urgent follow-up" icon={AlertTriangle} accent="rose" />
+        <MetricCard title="Resolved Value" value={formatCurrency(paidRent)} subtitle="Total amount received" icon={TrendingUp} accent="green" />
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <div className="grid grid-cols-1 gap-6 xl:grid-cols-3">
+        <div className="rounded-2xl border border-gray-100 bg-white p-5 shadow-sm xl:col-span-1">
+          <h3 className="mb-5 flex items-center gap-2 text-base font-semibold text-gray-800">
+            <ClipboardList size={18} className="text-blue-600" /> Performance Indicators
+          </h3>
+          <div className="space-y-5">
+            <ProgressStat
+              label="Occupancy Rate"
+              value={occupancyRate}
+              tone="blue"
+              icon={Home}
+              helper="Share of units currently leased"
+            />
+            <ProgressStat
+              label="Rent Collection Rate"
+              value={collectionRate}
+              tone="green"
+              icon={CircleDollarSign}
+              helper="Collected against total rent cycle"
+            />
+            <ProgressStat
+              label="Overdue Exposure"
+              value={overdueRate}
+              tone="red"
+              icon={ShieldAlert}
+              helper="Portion of rent currently overdue"
+            />
+          </div>
+        </div>
+
         {/* Occupancy Chart */}
-        <div className="card">
-          <h3 className="text-base font-semibold text-gray-800 mb-4">Occupancy Status</h3>
+        <div className="rounded-2xl border border-gray-100 bg-white p-5 shadow-sm xl:col-span-1">
+          <h3 className="mb-4 text-base font-semibold text-gray-800">Occupancy Status</h3>
           {pieData.some((d) => d.value > 0) ? (
-            <ResponsiveContainer width="100%" height={220}>
-              <PieChart>
-                <Pie data={pieData} cx="50%" cy="50%" outerRadius={80} dataKey="value" label={({ name, value }) => `${name}: ${value}`}>
-                  {pieData.map((_, i) => (
-                    <Cell key={i} fill={COLORS[i % COLORS.length]} />
-                  ))}
-                </Pie>
-                <Legend />
-                <Tooltip />
-              </PieChart>
-            </ResponsiveContainer>
+            <div className="space-y-4">
+              <ResponsiveContainer width="100%" height={170}>
+                <PieChart>
+                  <Pie data={pieData} cx="50%" cy="50%" outerRadius={64} innerRadius={38} dataKey="value" paddingAngle={4}>
+                    {pieData.map((_, i) => (
+                      <Cell key={i} fill={COLORS[i % COLORS.length]} />
+                    ))}
+                  </Pie>
+                  <Tooltip formatter={(value) => `${value} units`} />
+                </PieChart>
+              </ResponsiveContainer>
+
+              <div className="grid grid-cols-1 gap-2">
+                {pieData.map((item, i) => (
+                  <div key={item.name} className="flex items-center justify-between rounded-lg border border-gray-100 px-3 py-2">
+                    <div className="flex items-center gap-2">
+                      <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: COLORS[i % COLORS.length] }} />
+                      <span className="text-sm font-medium text-gray-700">{item.name}</span>
+                    </div>
+                    <span className="text-sm font-bold text-gray-900">{item.value}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
           ) : (
             <p className="text-gray-400 text-center py-12">No property data yet.</p>
           )}
         </div>
 
         {/* Rent Status Chart */}
-        <div className="card">
-          <h3 className="text-base font-semibold text-gray-800 mb-4">Rent Overview</h3>
+        <div className="rounded-2xl border border-gray-100 bg-white p-5 shadow-sm xl:col-span-1">
+          <h3 className="mb-4 text-base font-semibold text-gray-800">Rent Overview</h3>
           <ResponsiveContainer width="100%" height={220}>
             <BarChart data={rentData}>
               <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />

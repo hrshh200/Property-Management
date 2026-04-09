@@ -1,7 +1,18 @@
 import React, { useEffect, useState } from "react";
-import { Plus, CheckCircle, AlertCircle, DollarSign } from "lucide-react";
+import {
+  Plus,
+  CheckCircle,
+  AlertCircle,
+  DollarSign,
+  Search,
+  Wallet,
+  Clock3,
+  ReceiptText,
+  CalendarDays,
+} from "lucide-react";
 import { PageHeader, Modal, StatusBadge, EmptyState } from "../../components/UI";
 import api from "../../utils/api";
+import { formatCurrency } from "../../utils/currency";
 import toast from "react-hot-toast";
 
 const MONTHS = ["January","February","March","April","May","June","July","August","September","October","November","December"];
@@ -15,6 +26,7 @@ const RentManagement = () => {
   const [addModal, setAddModal] = useState(false);
   const [saving, setSaving] = useState(false);
   const [filterStatus, setFilterStatus] = useState("");
+  const [search, setSearch] = useState("");
 
   const [form, setForm] = useState({
     leaseId: "",
@@ -77,48 +89,129 @@ const RentManagement = () => {
     }
   };
 
+  const paidCount = rents.filter((r) => r.status === "Paid").length;
+  const pendingCount = rents.filter((r) => r.status === "Pending").length;
+  const overdueCount = rents.filter((r) => r.status === "Overdue").length;
+  const totalAmount = rents.reduce((sum, r) => sum + Number(r.amount || 0), 0);
+  const paidAmount = rents
+    .filter((r) => r.status === "Paid")
+    .reduce((sum, r) => sum + Number(r.amount || 0), 0);
+  const normalizedSearch = search.trim().toLowerCase();
+
+  const visibleRents = rents.filter((r) => {
+    if (!normalizedSearch) return true;
+    const haystack = [
+      r.tenant?.name,
+      r.tenant?.email,
+      r.property?.propertyType,
+      r.property?.address?.city,
+      r.month,
+      String(r.year),
+      r.status,
+    ]
+      .filter(Boolean)
+      .join(" ")
+      .toLowerCase();
+    return haystack.includes(normalizedSearch);
+  });
+
   if (loading) return <div className="flex items-center justify-center h-64 text-gray-400">Loading...</div>;
 
   return (
-    <div>
+    <div className="space-y-6">
       <PageHeader
         title="Rent Management"
-        subtitle="Track and manage rent payments"
+        subtitle="Track, generate and reconcile rent with confidence"
         action={
           <div className="flex gap-2">
             <button onClick={markOverdue} className="btn-secondary flex items-center gap-1.5 text-sm">
               <AlertCircle size={15} /> Mark Overdue
             </button>
-            <button onClick={() => setAddModal(true)} className="btn-primary flex items-center gap-2">
+            <button onClick={() => setAddModal(true)} className="btn-primary flex items-center gap-2 shadow-sm">
               <Plus size={16} /> Generate Rent
             </button>
           </div>
         }
       />
 
-      {/* Filter */}
-      <div className="flex gap-2 mb-6 flex-wrap">
-        {["", "Pending", "Paid", "Overdue"].map((s) => (
-          <button
-            key={s}
-            onClick={() => setFilterStatus(s)}
-            className={`px-4 py-1.5 rounded-lg text-sm font-medium border transition-colors ${
-              filterStatus === s
-                ? "bg-blue-600 text-white border-blue-600"
-                : "bg-white text-gray-600 border-gray-200 hover:bg-gray-50"
-            }`}
-          >
-            {s || "All"}
-          </button>
-        ))}
+      <section className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-slate-900 via-blue-900 to-emerald-900 px-6 py-7 sm:px-8 shadow-xl">
+        <div className="absolute -top-10 -right-8 h-28 w-28 rounded-full bg-emerald-400/20 blur-2xl" />
+        <div className="absolute -bottom-10 -left-8 h-32 w-32 rounded-full bg-blue-400/20 blur-2xl" />
+        <div className="relative grid grid-cols-1 md:grid-cols-3 gap-4 text-white">
+          <div className="md:col-span-2">
+            <p className="text-xs uppercase tracking-[0.16em] text-cyan-200 font-semibold">Revenue Hub</p>
+            <h2 className="mt-2 text-2xl sm:text-3xl font-extrabold">See payment health across all active leases</h2>
+            <p className="mt-2 text-sm text-blue-100 max-w-xl">
+              Monitor pending dues, recover overdue rents quickly, and keep every payment cycle transparent.
+            </p>
+          </div>
+          <div className="rounded-2xl border border-white/20 bg-white/10 p-4 backdrop-blur-sm">
+            <p className="text-xs uppercase tracking-wider text-cyan-200 font-semibold">Paid Collection</p>
+            <p className="mt-2 text-3xl font-extrabold">{formatCurrency(paidAmount)}</p>
+            <p className="mt-1 text-xs text-emerald-200">Out of {formatCurrency(totalAmount)} tracked rent</p>
+          </div>
+        </div>
+      </section>
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
+        <div className="rounded-2xl border border-gray-100 bg-white p-5 shadow-sm">
+          <p className="text-xs font-semibold uppercase tracking-wider text-gray-500">Paid Records</p>
+          <p className="mt-2 text-3xl font-extrabold text-emerald-700">{paidCount}</p>
+          <p className="text-xs text-gray-500 mt-1">Settled installments</p>
+        </div>
+        <div className="rounded-2xl border border-gray-100 bg-white p-5 shadow-sm">
+          <p className="text-xs font-semibold uppercase tracking-wider text-gray-500">Pending</p>
+          <p className="mt-2 text-3xl font-extrabold text-amber-700">{pendingCount}</p>
+          <p className="text-xs text-gray-500 mt-1">Awaiting payment</p>
+        </div>
+        <div className="rounded-2xl border border-gray-100 bg-white p-5 shadow-sm">
+          <p className="text-xs font-semibold uppercase tracking-wider text-gray-500">Overdue</p>
+          <p className="mt-2 text-3xl font-extrabold text-red-700">{overdueCount}</p>
+          <p className="text-xs text-gray-500 mt-1">Need follow-up</p>
+        </div>
+        <div className="rounded-2xl border border-gray-100 bg-white p-5 shadow-sm">
+          <p className="text-xs font-semibold uppercase tracking-wider text-gray-500">Total Tracked</p>
+          <p className="mt-2 text-3xl font-extrabold text-gray-900">{formatCurrency(totalAmount)}</p>
+          <p className="text-xs text-gray-500 mt-1">This filtered dataset</p>
+        </div>
       </div>
 
-      {rents.length === 0 ? (
+      <div className="rounded-2xl border border-gray-100 bg-white p-4 shadow-sm space-y-3">
+        <div className="flex items-center rounded-lg border border-gray-300 overflow-hidden focus-within:ring-2 focus-within:ring-blue-500 focus-within:border-transparent">
+          <div className="h-full px-3 py-2.5 bg-gray-50 border-r border-gray-200 text-gray-500 flex items-center">
+            <Search size={16} />
+          </div>
+          <input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search tenant, property, month, year or status"
+            className="w-full px-3 py-2.5 text-sm text-gray-700 bg-white outline-none"
+          />
+        </div>
+        <div className="flex gap-2 flex-wrap">
+          {["", "Pending", "Paid", "Overdue"].map((s) => (
+            <button
+              key={s}
+              onClick={() => setFilterStatus(s)}
+              className={`px-4 py-1.5 rounded-lg text-sm font-semibold border transition-colors ${
+                filterStatus === s
+                  ? "bg-blue-600 text-white border-blue-600"
+                  : "bg-white text-gray-600 border-gray-200 hover:bg-gray-50"
+              }`}
+            >
+              {s || "All"}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {visibleRents.length === 0 ? (
         <EmptyState message="No rent records found." icon={DollarSign} />
       ) : (
-        <div className="card overflow-x-auto p-0">
+        <div className="rounded-2xl border border-gray-100 bg-white p-0 shadow-sm overflow-hidden">
+          <div className="overflow-x-auto">
           <table className="w-full text-sm">
-            <thead className="bg-gray-50 border-b border-gray-100">
+            <thead className="bg-gray-50/90 border-b border-gray-100">
               <tr className="text-left">
                 <th className="px-4 py-3 font-medium text-gray-600">Tenant</th>
                 <th className="px-4 py-3 font-medium text-gray-600">Property</th>
@@ -130,27 +223,41 @@ const RentManagement = () => {
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-50">
-              {rents.map((r) => (
+              {visibleRents.map((r) => (
                 <tr key={r._id} className="hover:bg-gray-50">
                   <td className="px-4 py-3">
                     <p className="font-medium text-gray-900">{r.tenant?.name}</p>
                     <p className="text-gray-400 text-xs">{r.tenant?.email}</p>
                   </td>
                   <td className="px-4 py-3 text-gray-600">
-                    {r.property?.propertyType} — {r.property?.address?.city}
+                    <span className="inline-flex items-center gap-1.5">
+                      <Wallet size={13} className="text-gray-400" />
+                      {r.property?.propertyType} — {r.property?.address?.city}
+                    </span>
                   </td>
-                  <td className="px-4 py-3 text-gray-700">{r.month} {r.year}</td>
-                  <td className="px-4 py-3 font-semibold text-gray-900">₹{r.amount?.toLocaleString()}</td>
-                  <td className="px-4 py-3 text-gray-600">{new Date(r.dueDate).toLocaleDateString()}</td>
+                  <td className="px-4 py-3 text-gray-700">
+                    <span className="inline-flex items-center gap-1.5">
+                      <CalendarDays size={13} className="text-gray-400" />
+                      {r.month} {r.year}
+                    </span>
+                  </td>
+                  <td className="px-4 py-3 font-semibold text-gray-900">{formatCurrency(r.amount)}</td>
+                  <td className="px-4 py-3 text-gray-600">
+                    <span className="inline-flex items-center gap-1.5">
+                      <Clock3 size={13} className="text-gray-400" />
+                      {new Date(r.dueDate).toLocaleDateString()}
+                    </span>
+                  </td>
                   <td className="px-4 py-3"><StatusBadge status={r.status} /></td>
                   <td className="px-4 py-3">
                     {r.status !== "Paid" && (
-                      <button onClick={() => markPaid(r._id)} className="flex items-center gap-1 text-green-600 hover:text-green-700 text-xs font-medium">
+                      <button onClick={() => markPaid(r._id)} className="inline-flex items-center gap-1.5 rounded-lg border border-green-200 bg-green-50 px-2.5 py-1 text-green-700 hover:bg-green-100 text-xs font-semibold transition-colors">
                         <CheckCircle size={14} /> Mark Paid
                       </button>
                     )}
                     {r.status === "Paid" && r.paidDate && (
-                      <span className="text-xs text-gray-400">
+                      <span className="inline-flex items-center gap-1 text-xs text-gray-500">
+                        <ReceiptText size={13} />
                         Paid {new Date(r.paidDate).toLocaleDateString()}
                       </span>
                     )}
@@ -159,6 +266,7 @@ const RentManagement = () => {
               ))}
             </tbody>
           </table>
+          </div>
         </div>
       )}
 
@@ -170,12 +278,12 @@ const RentManagement = () => {
               <option value="">Select lease</option>
               {leases.map((l) => (
                 <option key={l._id} value={l._id}>
-                  {l.tenant?.name} — {l.property?.propertyType}, {l.property?.address?.city} (₹{l.rentAmount}/mo)
+                  {l.tenant?.name} — {l.property?.propertyType}, {l.property?.address?.city} ({formatCurrency(l.rentAmount)}/mo)
                 </option>
               ))}
             </select>
           </div>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Month</label>
               <select value={form.month} onChange={(e) => setForm({ ...form, month: e.target.value })} className="input-field">

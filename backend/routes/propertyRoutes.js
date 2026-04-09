@@ -1,6 +1,7 @@
 const express = require("express");
 const router = express.Router();
 const { verifyToken, requireOwner, requireTenant } = require("../middleware/authMiddleware");
+const { uploadMaintenancePhotos, uploadComplianceDocument } = require("../middleware/uploadMiddleware");
 const {
   signUp, signIn, getProfile, updateProfile,
   addProperty, getOwnerProperties, getPropertyById, updateProperty, deleteProperty,
@@ -11,6 +12,10 @@ const {
   getOwnerDashboard,
   getTenantDashboard, getTenantLease, getTenantRentHistory,
   createMaintenanceRequest, getTenantMaintenanceRequests,
+  createMoveOutRequest, getTenantMoveOutRequests,
+  getOwnerMoveOutRequests, decideMoveOutRequest, completeMoveOutRequest,
+  uploadOwnerComplianceDocument, getOwnerComplianceDocuments,
+  uploadTenantComplianceDocument, getTenantComplianceDocuments,
 } = require("../controllers/propertyController");
 
 // ── Auth ──────────────────────────────────────
@@ -51,6 +56,21 @@ router.get("/owner/maintenance", verifyToken, requireOwner, getOwnerMaintenanceR
 router.patch("/owner/maintenance/:id/status", verifyToken, requireOwner, updateMaintenanceStatus);
 router.post("/owner/maintenance/:id/comment", verifyToken, requireOwner, addCommentToRequest);
 
+// ── Owner – Move-Out Requests ──────────────────
+router.get("/owner/move-out", verifyToken, requireOwner, getOwnerMoveOutRequests);
+router.patch("/owner/move-out/:id/decision", verifyToken, requireOwner, decideMoveOutRequest);
+router.patch("/owner/move-out/:id/complete", verifyToken, requireOwner, completeMoveOutRequest);
+
+// ── Owner – Compliance Documents ───────────────
+router.get("/owner/compliance-documents", verifyToken, requireOwner, getOwnerComplianceDocuments);
+router.post(
+  "/owner/compliance-documents",
+  verifyToken,
+  requireOwner,
+  uploadComplianceDocument.single("document"),
+  uploadOwnerComplianceDocument
+);
+
 // ── Tenant – Dashboard ────────────────────────
 router.get("/tenant/dashboard", verifyToken, requireTenant, getTenantDashboard);
 
@@ -59,7 +79,27 @@ router.get("/tenant/lease", verifyToken, requireTenant, getTenantLease);
 router.get("/tenant/rent-history", verifyToken, requireTenant, getTenantRentHistory);
 
 // ── Tenant – Maintenance ──────────────────────
-router.post("/tenant/maintenance", verifyToken, requireTenant, createMaintenanceRequest);
+router.post(
+  "/tenant/maintenance",
+  verifyToken,
+  requireTenant,
+  uploadMaintenancePhotos.array("photos", 5),
+  createMaintenanceRequest
+);
 router.get("/tenant/maintenance", verifyToken, requireTenant, getTenantMaintenanceRequests);
+
+// ── Tenant – Move-Out Requests ─────────────────
+router.post("/tenant/move-out", verifyToken, requireTenant, createMoveOutRequest);
+router.get("/tenant/move-out", verifyToken, requireTenant, getTenantMoveOutRequests);
+
+// ── Tenant – Compliance Documents ──────────────
+router.get("/tenant/compliance-documents", verifyToken, requireTenant, getTenantComplianceDocuments);
+router.post(
+  "/tenant/compliance-documents",
+  verifyToken,
+  requireTenant,
+  uploadComplianceDocument.single("document"),
+  uploadTenantComplianceDocument
+);
 
 module.exports = router;

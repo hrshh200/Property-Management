@@ -6,9 +6,13 @@ import store from "./app/store";
 import ProtectedRoute from "./components/ProtectedRoute";
 import Layout from "./components/Layout";
 
+// Landing
+import LandingPage from "./pages/LandingPage";
+
 // Auth
 import Login from "./pages/auth/Login";
 import Register from "./pages/auth/Register";
+import Profile from "./pages/Profile";
 
 // Owner
 import OwnerDashboard from "./pages/owner/OwnerDashboard";
@@ -30,9 +34,9 @@ function App() {
         <Toaster position="top-right" toastOptions={{ duration: 3000 }} />
         <Routes>
           {/* Public */}
+          <Route path="/" element={<LandingPage />} />
           <Route path="/login" element={<Login />} />
           <Route path="/register" element={<Register />} />
-          <Route path="/" element={<Navigate to="/login" replace />} />
 
           {/* Owner Routes */}
           <Route
@@ -50,6 +54,7 @@ function App() {
             <Route path="rent" element={<RentManagement />} />
             <Route path="maintenance" element={<Maintenance />} />
             <Route path="vacancies" element={<Vacancies />} />
+            <Route path="profile" element={<Profile />} />
           </Route>
 
           {/* Tenant Routes */}
@@ -65,6 +70,7 @@ function App() {
             <Route path="dashboard" element={<TenantDashboard />} />
             <Route path="rent" element={<TenantRent />} />
             <Route path="maintenance" element={<TenantMaintenance />} />
+            <Route path="profile" element={<Profile />} />
           </Route>
 
           {/* Fallback */}

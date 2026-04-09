@@ -3,7 +3,7 @@ import { NavLink, useNavigate } from "react-router-dom";
 import { useDispatch, useSelector } from "react-redux";
 import {
   Building2, LayoutDashboard, Home, Users, DollarSign,
-  Wrench, LogOut, Menu, X, MapPin, ChevronRight,
+  Wrench, LogOut, Menu, X, MapPin, ChevronRight, UserCircle2,
 } from "lucide-react";
 import { logout } from "../app/slices/authSlice";
 import toast from "react-hot-toast";
@@ -15,12 +15,14 @@ const ownerLinks = [
   { to: "/owner/rent", label: "Rent Management", icon: DollarSign },
   { to: "/owner/maintenance", label: "Maintenance", icon: Wrench },
   { to: "/owner/vacancies", label: "Vacancies", icon: MapPin },
+  { to: "/owner/profile", label: "My Profile", icon: UserCircle2 },
 ];
 
 const tenantLinks = [
   { to: "/tenant/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { to: "/tenant/rent", label: "Rent & Payments", icon: DollarSign },
   { to: "/tenant/maintenance", label: "My Requests", icon: Wrench },
+  { to: "/tenant/profile", label: "My Profile", icon: UserCircle2 },
 ];
 
 const Sidebar = () => {
