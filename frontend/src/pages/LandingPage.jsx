@@ -3,7 +3,7 @@ import { Link } from "react-router-dom";
 import {
   Building2, Home, Users, DollarSign, Wrench, Shield,
   BarChart3, Bell, ChevronRight, Star, CheckCircle2,
-  ArrowRight, Menu, X, MapPin, TrendingUp, Clock,
+  ArrowRight, Menu, X, MapPin, TrendingUp, Clock, Plus, Minus,
 } from "lucide-react";
 import { formatCurrencyCompact, formatCurrency } from "../utils/currency";
 
@@ -105,9 +105,29 @@ const TESTIMONIALS = [
   },
 ];
 
+const FAQ_ITEMS = [
+  {
+    q: "How do I add a property?",
+    a: "Sign in as an owner, open Properties, and create a new property with unit and location details.",
+  },
+  {
+    q: "Can tenants raise maintenance requests?",
+    a: "Yes. Tenants can submit requests from their dashboard and track status updates in real time.",
+  },
+  {
+    q: "Can I track paid and pending rent?",
+    a: "Yes. Rent management shows paid, pending, and overdue statuses for each lease.",
+  },
+  {
+    q: "Is PropManager mobile friendly?",
+    a: "Yes. The app is designed to work across desktop, tablet, and mobile browsers.",
+  },
+];
+
 const LandingPage = () => {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [scrolled, setScrolled] = useState(false);
+  const [openFaqIndex, setOpenFaqIndex] = useState(null);
 
   useEffect(() => {
     const onScroll = () => setScrolled(window.scrollY > 20);
@@ -167,23 +187,24 @@ const LandingPage = () => {
       </header>
 
       {/* ── HERO ── */}
-      <section className="relative min-h-screen flex items-center overflow-hidden bg-gradient-to-br from-slate-900 via-blue-950 to-indigo-900 pt-16">
-        {/* Decorative blobs */}
-        <div className="absolute top-20 right-0 w-96 h-96 bg-blue-500/20 rounded-full blur-3xl pointer-events-none" />
-        <div className="absolute bottom-10 left-0 w-72 h-72 bg-indigo-500/20 rounded-full blur-3xl pointer-events-none" />
-        {/* Grid texture */}
-        <div className="absolute inset-0 bg-[url('data:image/svg+xml;utf8,<svg xmlns=%22http://www.w3.org/2000/svg%22 width=%2240%22 height=%2240%22><path d=%22M0 40L40 0%22 stroke=%22%23ffffff06%22 stroke-width=%221%22/></svg>')] opacity-40" />
+      <section className="relative min-h-screen flex items-center overflow-hidden bg-gradient-to-br from-slate-950 via-blue-950 to-indigo-900 pt-16">
+        {/* Animated blobs */}
+        <div className="absolute top-20 right-0 w-[500px] h-[500px] bg-blue-500/15 rounded-full blur-3xl pointer-events-none animate-blob" />
+        <div className="absolute bottom-10 left-0 w-[400px] h-[400px] bg-indigo-500/15 rounded-full blur-3xl pointer-events-none animate-blob-delay" />
+        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] bg-cyan-500/8 rounded-full blur-3xl pointer-events-none" />
+        {/* Dot grid texture */}
+        <div className="absolute inset-0 bg-[radial-gradient(circle,rgba(255,255,255,0.04)_1px,transparent_1px)] bg-[size:32px_32px]" />
 
         <div className="relative max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-24 lg:py-32 grid lg:grid-cols-2 gap-16 items-center">
           {/* Left */}
-          <div>
-            <div className="inline-flex items-center gap-2 bg-blue-500/20 border border-blue-400/30 text-blue-300 text-xs font-semibold px-3 py-1.5 rounded-full mb-6">
-              <Star size={12} className="fill-blue-400 text-blue-400" />
+          <div className="animate-fade-up">
+            <div className="inline-flex items-center gap-2 bg-blue-500/20 border border-blue-400/30 text-blue-300 text-xs font-semibold px-3.5 py-1.5 rounded-full mb-6 shadow-inner">
+              <Star size={11} className="fill-blue-400 text-blue-400" />
               Trusted Property Management Platform
             </div>
-            <h1 className="text-4xl sm:text-5xl lg:text-6xl font-extrabold text-white leading-tight tracking-tight">
+            <h1 className="text-4xl sm:text-5xl lg:text-6xl font-extrabold text-white leading-[1.1] tracking-tight">
               Manage Properties
-              <span className="block text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-cyan-400 mt-1">
+              <span className="block text-transparent bg-clip-text bg-gradient-to-r from-blue-400 via-cyan-400 to-sky-300 mt-2">
                 Without the Chaos
               </span>
             </h1>
@@ -194,7 +215,7 @@ const LandingPage = () => {
             <div className="flex flex-col sm:flex-row gap-4 mt-10">
               <Link
                 to="/register"
-                className="inline-flex items-center justify-center gap-2 bg-blue-500 hover:bg-blue-400 text-white font-semibold px-6 py-3.5 rounded-xl transition-all duration-200 shadow-lg shadow-blue-500/30 hover:shadow-blue-400/40 group"
+                className="inline-flex items-center justify-center gap-2 btn-shimmer text-white font-bold px-6 py-3.5 rounded-xl transition-all duration-200 shadow-lg shadow-blue-600/40 hover:shadow-blue-400/50 group"
               >
                 Start for Free
                 <ArrowRight size={18} className="group-hover:translate-x-1 transition-transform" />
@@ -320,10 +341,10 @@ const LandingPage = () => {
             </p>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-8">
-            {FEATURES.map((f) => (
-              <div key={f.title} className="group p-6 bg-white rounded-2xl border border-gray-100 hover:border-blue-100 hover:shadow-xl transition-all duration-300">
-                <div className={`w-11 h-11 rounded-xl flex items-center justify-center ${f.color} mb-4 group-hover:scale-110 transition-transform duration-300`}>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+            {FEATURES.map((f, i) => (
+              <div key={f.title} className="group p-6 bg-white rounded-2xl border border-gray-100 hover:border-blue-200 hover:shadow-[0_8px_40px_rgba(59,130,246,0.12)] transition-all duration-300 cursor-default">
+                <div className={`w-12 h-12 rounded-2xl flex items-center justify-center ${f.color} mb-4 group-hover:scale-110 transition-transform duration-300 shadow-sm`}>
                   <f.icon size={22} />
                 </div>
                 <h3 className="font-bold text-gray-900 text-lg mb-2">{f.title}</h3>
@@ -344,11 +365,11 @@ const LandingPage = () => {
 
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-8 relative">
             {/* Connector line desktop */}
-            <div className="hidden lg:block absolute top-10 left-[12.5%] right-[12.5%] h-0.5 bg-gradient-to-r from-blue-200 via-blue-400 to-blue-200" />
+            <div className="hidden lg:block absolute top-10 left-[12.5%] right-[12.5%] h-0.5 bg-gradient-to-r from-blue-100 via-blue-400 to-blue-100" />
 
             {HOW_IT_WORKS.map((s, i) => (
               <div key={s.step} className="relative text-center">
-                <div className="inline-flex items-center justify-center w-20 h-20 rounded-2xl bg-white shadow-lg border border-blue-100 mb-5 text-2xl font-extrabold text-blue-600">
+                <div className="inline-flex items-center justify-center w-20 h-20 rounded-2xl bg-gradient-to-br from-blue-600 to-indigo-600 shadow-xl shadow-blue-200 border border-blue-400/20 mb-5 text-2xl font-extrabold text-white">
                   {s.step}
                 </div>
                 <h3 className="font-bold text-gray-900 mb-2">{s.title}</h3>
@@ -413,17 +434,19 @@ const LandingPage = () => {
             <h2 className="text-3xl sm:text-4xl font-extrabold text-gray-900 mt-3">Loved by owners &amp; tenants</h2>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
             {TESTIMONIALS.map((t) => (
-              <div key={t.name} className="bg-white rounded-2xl p-6 border border-gray-100 shadow-sm hover:shadow-lg transition-shadow duration-300">
-                <div className="flex gap-1 mb-4">
+              <div key={t.name} className="relative bg-white rounded-2xl p-6 border border-gray-100 shadow-sm hover:shadow-xl hover:border-blue-100 transition-all duration-300 group overflow-hidden">
+                <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-blue-500 via-indigo-500 to-purple-500 rounded-t-2xl" />
+                <div className="absolute top-4 right-5 text-6xl font-serif text-gray-100 leading-none select-none">&ldquo;</div>
+                <div className="flex gap-1 mb-4 relative">
                   {Array.from({ length: t.stars }).map((_, i) => (
-                    <Star key={i} size={16} className="fill-yellow-400 text-yellow-400" />
+                    <Star key={i} size={15} className="fill-amber-400 text-amber-400" />
                   ))}
                 </div>
-                <p className="text-gray-600 text-sm leading-relaxed mb-5">&ldquo;{t.text}&rdquo;</p>
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-full bg-blue-600 flex items-center justify-center text-white font-bold text-sm">
+                <p className="text-gray-600 text-sm leading-relaxed mb-5 relative">{t.text}</p>
+                <div className="flex items-center gap-3 relative">
+                  <div className="w-10 h-10 rounded-full bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center text-white font-bold text-sm shadow-md">
                     {t.avatar}
                   </div>
                   <div>
@@ -438,8 +461,10 @@ const LandingPage = () => {
       </section>
 
       {/* ── CTA BANNER ── */}
-      <section className="py-24 bg-gradient-to-br from-blue-600 via-indigo-700 to-purple-700 relative overflow-hidden">
-        <div className="absolute inset-0 bg-[url('data:image/svg+xml;utf8,<svg xmlns=%22http://www.w3.org/2000/svg%22 width=%2260%22 height=%2260%22><circle cx=%2230%22 cy=%2230%22 r=%221%22 fill=%22%23ffffff15%22/></svg>')] opacity-60" />
+      <section className="py-24 bg-gradient-to-br from-blue-700 via-indigo-700 to-purple-800 relative overflow-hidden">
+        <div className="absolute inset-0 bg-[radial-gradient(circle,rgba(255,255,255,0.06)_1px,transparent_1px)] bg-[size:28px_28px]" />
+        <div className="absolute top-0 left-1/4 w-96 h-96 bg-blue-400/20 rounded-full blur-3xl animate-blob" />
+        <div className="absolute bottom-0 right-1/4 w-80 h-80 bg-purple-400/20 rounded-full blur-3xl animate-blob-delay" />
         <div className="relative max-w-3xl mx-auto px-4 text-center">
           <h2 className="text-3xl sm:text-5xl font-extrabold text-white mb-5 leading-tight">
             Ready to simplify your property management?
@@ -465,6 +490,76 @@ const LandingPage = () => {
         </div>
       </section>
 
+      {/* ── LEGAL & HELP ── */}
+      <section className="py-24 bg-gradient-to-b from-slate-50 to-blue-50/60 relative overflow-hidden">
+        <div className="absolute top-10 left-1/2 -translate-x-1/2 w-[700px] h-[220px] bg-blue-300/20 blur-3xl rounded-full pointer-events-none" />
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 space-y-8 relative">
+          <div className="text-center mb-12">
+            <span className="text-sm font-semibold text-blue-700 uppercase tracking-widest">Trust & Transparency</span>
+            <h2 className="text-3xl sm:text-4xl font-extrabold text-slate-900 mt-3">Policy and Help Center</h2>
+            <p className="text-slate-500 mt-3 max-w-2xl mx-auto">Everything important in one consistent experience, right inside the landing page.</p>
+          </div>
+
+          <article id="privacy-policy" className="scroll-mt-24 bg-white border border-blue-100 rounded-3xl p-6 sm:p-8 shadow-[0_12px_36px_rgba(37,99,235,0.10)]">
+            <h3 className="text-2xl sm:text-3xl font-extrabold text-slate-900 mb-5">Privacy Policy</h3>
+            <div className="grid md:grid-cols-3 gap-4">
+              {[
+                "We collect only account, lease, maintenance, and payment information required for secure platform operation.",
+                "Your data is used for workflows, support, and reliability improvements, and is never sold to third parties.",
+                "You can request access, correction, or deletion of your data by contacting PropManager support.",
+              ].map((point) => (
+                <div key={point} className="rounded-2xl border border-slate-100 bg-slate-50/70 p-4">
+                  <p className="text-slate-600 text-sm leading-relaxed">{point}</p>
+                </div>
+              ))}
+            </div>
+          </article>
+
+          <article id="faq" className="scroll-mt-24 bg-white border border-indigo-100 rounded-3xl p-6 sm:p-8 shadow-[0_12px_36px_rgba(79,70,229,0.10)]">
+            <h3 className="text-2xl sm:text-3xl font-extrabold text-slate-900 mb-6">Frequently Asked Questions</h3>
+            <div className="space-y-3">
+              {FAQ_ITEMS.map((item, index) => {
+                const isOpen = openFaqIndex === index;
+                return (
+                  <div key={item.q} className="rounded-2xl border border-slate-200 bg-white overflow-hidden transition-all duration-300">
+                    <button
+                      type="button"
+                      onClick={() => setOpenFaqIndex(isOpen ? null : index)}
+                      className="w-full flex items-center justify-between gap-3 px-4 sm:px-5 py-4 text-left hover:bg-slate-50 transition-colors"
+                    >
+                      <span className="font-semibold text-slate-900">{item.q}</span>
+                      <span className="shrink-0 w-8 h-8 rounded-full bg-blue-50 text-blue-700 flex items-center justify-center border border-blue-100">
+                        {isOpen ? <Minus size={16} /> : <Plus size={16} />}
+                      </span>
+                    </button>
+                    {isOpen && (
+                      <div className="px-4 sm:px-5 pb-4 pt-1">
+                        <p className="text-slate-600 text-sm leading-relaxed">{item.a}</p>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </article>
+
+          <article id="terms-and-conditions" className="scroll-mt-24 bg-white border border-sky-100 rounded-3xl p-6 sm:p-8 shadow-[0_12px_36px_rgba(14,165,233,0.10)]">
+            <h3 className="text-2xl sm:text-3xl font-extrabold text-slate-900 mb-5">Terms and Conditions</h3>
+            <div className="grid md:grid-cols-3 gap-4">
+              {[
+                "By using PropManager, you agree to provide accurate account and property information and use the platform lawfully.",
+                "You are responsible for maintaining account credential security and activity performed under your account.",
+                "Features may evolve for reliability and security, and misuse can result in restrictions or suspension.",
+              ].map((point) => (
+                <div key={point} className="rounded-2xl border border-slate-100 bg-slate-50/70 p-4">
+                  <p className="text-slate-600 text-sm leading-relaxed">{point}</p>
+                </div>
+              ))}
+            </div>
+          </article>
+        </div>
+      </section>
+
       {/* ── FOOTER ── */}
       <footer className="bg-slate-900 text-slate-400 py-10">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-col md:flex-row items-center justify-between gap-4">
@@ -475,7 +570,16 @@ const LandingPage = () => {
             <span className="text-white font-bold text-sm">PropManager</span>
           </div>
           <p className="text-sm text-slate-500">© {new Date().getFullYear()} PropManager. All rights reserved.</p>
-          <div className="flex items-center gap-5 text-sm">
+          <div className="flex flex-wrap items-center justify-center gap-5 text-sm">
+            <a href="#privacy-policy" className="hover:text-white transition-colors">
+              Privacy Policy
+            </a>
+            <a href="#faq" className="hover:text-white transition-colors">
+              Frequently Asked Questions
+            </a>
+            <a href="#terms-and-conditions" className="hover:text-white transition-colors">
+              Terms and Conditions
+            </a>
             <Link to="/login" className="hover:text-white transition-colors">Sign In</Link>
             <Link to="/register" className="hover:text-white transition-colors">Register</Link>
           </div>

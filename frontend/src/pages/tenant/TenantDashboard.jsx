@@ -292,15 +292,19 @@ const TenantDashboard = () => {
   };
 
   return (
-    <div className="space-y-6">
+    <div className="relative min-h-screen bg-gradient-to-br from-green-100 via-blue-50 to-cyan-150 pb-8">
+      <div className="absolute top-0 right-0 w-96 h-96 bg-green-400/20 rounded-full blur-3xl animate-blob" />
+      <div className="absolute bottom-0 left-0 w-96 h-96 bg-cyan-400/20 rounded-full blur-3xl animate-blob-delay" />
+      <div className="relative z-10 space-y-8 px-4 sm:px-6 lg:px-8 max-w-7xl mx-auto">
       <PageHeader
         title="My Dashboard"
-        subtitle="Overview of your tenancy details"
+        subtitle="Your complete tenancy command center with rent, requests, lease timeline and documents"
       />
 
-      <section className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-slate-900 via-blue-900 to-indigo-900 px-6 py-7 sm:px-8 shadow-xl">
-        <div className="absolute -top-10 -right-8 h-28 w-28 rounded-full bg-blue-400/20 blur-2xl" />
-        <div className="absolute -bottom-10 -left-8 h-32 w-32 rounded-full bg-indigo-400/20 blur-2xl" />
+      <section className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-slate-950 via-blue-950 to-indigo-900 px-6 py-7 sm:px-8 shadow-2xl animate-fade-up">
+        <div className="absolute -top-10 -right-8 h-28 w-28 rounded-full bg-blue-400/20 blur-2xl animate-blob" />
+        <div className="absolute -bottom-10 -left-8 h-32 w-32 rounded-full bg-indigo-400/20 blur-2xl animate-blob-delay" />
+        <div className="absolute inset-0 bg-[radial-gradient(circle,rgba(255,255,255,0.05)_1px,transparent_1px)] bg-[size:24px_24px]" />
         <div className="relative grid grid-cols-1 md:grid-cols-3 gap-4 text-white">
           <div className="md:col-span-2">
             <p className="text-xs uppercase tracking-[0.16em] text-blue-200 font-semibold">Tenant Hub</p>
@@ -318,12 +322,12 @@ const TenantDashboard = () => {
       </section>
 
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        <div className="rounded-2xl border border-gray-100 bg-white p-5 shadow-sm">
+        <div className="rounded-2xl border border-amber-100 bg-gradient-to-br from-white to-amber-50 p-5 shadow-[0_8px_22px_rgba(251,191,36,0.12)]">
           <p className="text-xs font-semibold uppercase tracking-wider text-gray-500">Pending Rent</p>
           <p className="mt-2 text-3xl font-extrabold text-amber-700">{formatCurrency(pendingRent)}</p>
           <p className="text-xs text-gray-500 mt-1 inline-flex items-center gap-1"><Wallet size={12} /> Awaiting payment</p>
         </div>
-        <div className="rounded-2xl border border-gray-100 bg-white p-5 shadow-sm">
+        <div className="rounded-2xl border border-red-100 bg-gradient-to-br from-white to-red-50 p-5 shadow-[0_8px_22px_rgba(239,68,68,0.10)]">
           <p className="text-xs font-semibold uppercase tracking-wider text-gray-500">Overdue Rent</p>
           <p className="mt-2 text-3xl font-extrabold text-red-700">{formatCurrency(overdueRent)}</p>
           <p className="text-xs text-gray-500 mt-1 inline-flex items-center gap-1"><AlertTriangle size={12} /> Needs immediate action</p>
@@ -331,7 +335,7 @@ const TenantDashboard = () => {
         <button
           type="button"
           onClick={() => navigate("/tenant/maintenance")}
-          className="rounded-2xl border border-gray-100 bg-white p-5 shadow-sm text-left hover:shadow-md hover:-translate-y-0.5 transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-blue-500"
+          className="rounded-2xl border border-blue-100 bg-gradient-to-br from-white to-blue-50 p-5 shadow-[0_8px_22px_rgba(59,130,246,0.12)] text-left hover:shadow-[0_14px_28px_rgba(59,130,246,0.22)] hover:-translate-y-0.5 transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-blue-500"
         >
           <p className="text-xs font-semibold uppercase tracking-wider text-gray-500">Open Requests</p>
           <p className="mt-2 text-3xl font-extrabold text-blue-700">{openRequests}</p>
@@ -339,7 +343,7 @@ const TenantDashboard = () => {
         </button>
       </div>
 
-      <section className="rounded-2xl border border-gray-100 bg-white p-5 shadow-sm">
+      <section className="rounded-2xl border border-gray-100 bg-white/95 p-5 shadow-[0_8px_24px_rgba(15,23,42,0.06)]">
         <div className="mb-4 flex items-center justify-between">
           <h3 className="flex items-center gap-2 text-base font-semibold text-gray-900">
             <BellRing size={18} className="text-blue-600" /> Smart Alerts
@@ -365,7 +369,7 @@ const TenantDashboard = () => {
               };
 
               return (
-                <div key={alert.id} className="rounded-xl border border-gray-100 p-4">
+                <div key={alert.id} className="rounded-xl border border-gray-100 bg-white p-4 shadow-sm hover:shadow-md transition-all duration-200">
                   <div className="flex items-start justify-between gap-3">
                     <div className="flex items-start gap-3">
                       <div className={`rounded-lg p-2 ${toneClasses[alert.tone] || toneClasses.blue}`}>
@@ -394,7 +398,7 @@ const TenantDashboard = () => {
       {lease ? (
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           {/* Property Info */}
-          <div className="rounded-2xl border border-gray-100 bg-white p-5 shadow-sm">
+          <div className="rounded-2xl border border-gray-100 bg-white/95 p-5 shadow-[0_8px_24px_rgba(15,23,42,0.06)]">
             <div className="flex items-center gap-2 mb-4">
               <div className="p-2 bg-blue-50 rounded-lg"><Building2 size={18} className="text-blue-600" /></div>
               <h3 className="font-semibold text-gray-900">My Property</h3>
@@ -534,7 +538,7 @@ const TenantDashboard = () => {
           </div>
 
           {/* Lease Info */}
-          <div className="rounded-2xl border border-gray-100 bg-white p-5 shadow-sm">
+          <div className="rounded-2xl border border-gray-100 bg-white/95 p-5 shadow-[0_8px_24px_rgba(15,23,42,0.06)]">
             <div className="flex items-center gap-2 mb-4">
               <div className="p-2 bg-green-50 rounded-lg"><Calendar size={18} className="text-green-600" /></div>
               <h3 className="font-semibold text-gray-900">Lease Details</h3>
@@ -572,7 +576,7 @@ const TenantDashboard = () => {
           </div>
         </div>
       ) : (
-        <div className="rounded-2xl border border-gray-100 bg-white text-center py-16 shadow-sm">
+        <div className="rounded-2xl border border-gray-100 bg-white text-center py-16 shadow-[0_8px_24px_rgba(15,23,42,0.06)]">
           <Building2 size={48} className="mx-auto text-gray-300 mb-4" />
           <p className="text-gray-500 text-lg">No active lease found.</p>
           <p className="text-gray-400 text-sm mt-1">Contact your property owner to be assigned a lease.</p>
@@ -750,6 +754,7 @@ const TenantDashboard = () => {
           </form>
         )}
       </Modal>
+      </div>
     </div>
   );
 };

@@ -8,41 +8,80 @@ body {
 }
 
 .btn-primary {
-  @apply bg-blue-600 hover:bg-blue-700 text-white font-medium py-2 px-4 rounded-lg transition-colors duration-200;
+  @apply bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-500 hover:to-blue-600
+         text-white font-semibold py-2 px-4 rounded-xl transition-all duration-200
+         shadow-[0_2px_12px_rgba(59,130,246,0.30)] hover:shadow-[0_4px_20px_rgba(59,130,246,0.45)]
+         active:scale-[0.98] cursor-pointer;
 }
 
 .btn-secondary {
-  @apply bg-gray-100 hover:bg-gray-200 text-gray-700 font-medium py-2 px-4 rounded-lg transition-colors duration-200;
+  @apply bg-white hover:bg-gray-50 text-gray-700 font-semibold py-2 px-4 rounded-xl
+         border border-gray-200 hover:border-gray-300 transition-all duration-200
+         shadow-sm hover:shadow-md active:scale-[0.98] cursor-pointer;
 }
 
 .btn-danger {
-  @apply bg-red-500 hover:bg-red-600 text-white font-medium py-2 px-4 rounded-lg transition-colors duration-200;
+  @apply bg-gradient-to-r from-red-500 to-rose-600 hover:from-red-400 hover:to-rose-500
+         text-white font-semibold py-2 px-4 rounded-xl transition-all duration-200
+         shadow-[0_2px_12px_rgba(239,68,68,0.28)] hover:shadow-[0_4px_16px_rgba(239,68,68,0.40)]
+         active:scale-[0.98] cursor-pointer;
 }
 
 .card {
-  @apply bg-white rounded-xl shadow-sm border border-gray-100 p-6;
+  @apply bg-white rounded-2xl shadow-[0_1px_12px_rgba(0,0,0,0.06)] border border-gray-100 p-6;
 }
 
 .input-field {
-  @apply w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent;
+  @apply w-full border border-gray-200 rounded-xl px-3.5 py-2.5 text-sm text-gray-800
+         focus:outline-none focus:ring-2 focus:ring-blue-400/40 focus:border-blue-400
+         transition-all duration-200 bg-white placeholder:text-gray-400;
 }
 
 .badge-green {
-  @apply bg-green-100 text-green-800 text-xs font-medium px-2.5 py-0.5 rounded-full;
+  @apply bg-emerald-50 text-emerald-700 text-xs font-semibold px-2.5 py-0.5 rounded-full ring-1 ring-emerald-200;
 }
 
 .badge-yellow {
-  @apply bg-yellow-100 text-yellow-800 text-xs font-medium px-2.5 py-0.5 rounded-full;
+  @apply bg-amber-50 text-amber-700 text-xs font-semibold px-2.5 py-0.5 rounded-full ring-1 ring-amber-200;
 }
 
 .badge-red {
-  @apply bg-red-100 text-red-800 text-xs font-medium px-2.5 py-0.5 rounded-full;
+  @apply bg-red-50 text-red-700 text-xs font-semibold px-2.5 py-0.5 rounded-full ring-1 ring-red-200;
 }
 
 .badge-blue {
-  @apply bg-blue-100 text-blue-800 text-xs font-medium px-2.5 py-0.5 rounded-full;
+  @apply bg-blue-50 text-blue-700 text-xs font-semibold px-2.5 py-0.5 rounded-full ring-1 ring-blue-200;
 }
 
 .badge-gray {
-  @apply bg-gray-100 text-gray-800 text-xs font-medium px-2.5 py-0.5 rounded-full;
+  @apply bg-gray-100 text-gray-600 text-xs font-semibold px-2.5 py-0.5 rounded-full ring-1 ring-gray-200;
 }
+
+/* ── Shimmer animation for CTA highlight ── */
+@keyframes shimmer {
+  0%   { background-position: -200% center; }
+  100% { background-position: 200% center; }
+}
+.btn-shimmer {
+  background: linear-gradient(90deg, #1d4ed8 20%, #60a5fa 50%, #1d4ed8 80%);
+  background-size: 200% auto;
+  animation: shimmer 2.6s linear infinite;
+}
+
+/* ── Fade-up entrance animation ── */
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(16px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.animate-fade-up   { animation: fadeUp 0.55s ease-out both; }
+.animate-fade-up-1 { animation: fadeUp 0.55s 0.10s ease-out both; }
+.animate-fade-up-2 { animation: fadeUp 0.55s 0.20s ease-out both; }
+.animate-fade-up-3 { animation: fadeUp 0.55s 0.30s ease-out both; }
+
+/* ── Floating blob pulse ── */
+@keyframes blobPulse {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.08); }
+}
+.animate-blob { animation: blobPulse 7s ease-in-out infinite; }
+.animate-blob-delay { animation: blobPulse 7s 3.5s ease-in-out infinite; }

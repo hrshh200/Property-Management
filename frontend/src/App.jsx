@@ -39,6 +39,9 @@ function App() {
         <Routes>
           {/* Public */}
           <Route path="/" element={<LandingPage />} />
+          <Route path="/privacy-policy" element={<Navigate to="/#privacy-policy" replace />} />
+          <Route path="/faq" element={<Navigate to="/#faq" replace />} />
+          <Route path="/terms-and-conditions" element={<Navigate to="/#terms-and-conditions" replace />} />
           <Route path="/login" element={<Login />} />
           <Route path="/register" element={<Register />} />
           <Route path="/forgot-password" element={<ForgotPassword />} />

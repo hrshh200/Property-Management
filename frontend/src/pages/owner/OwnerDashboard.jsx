@@ -21,6 +21,10 @@ import {
   ShieldCheck,
   FileText,
   Download,
+  Mail,
+  MessageCircle,
+  Sparkles,
+  Rocket,
 } from "lucide-react";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from "recharts";
 import { PageHeader } from "../../components/UI";
@@ -41,15 +45,16 @@ const MetricCard = ({ title, value, subtitle, icon: Icon, accent = "blue" }) => 
   };
 
   return (
-    <div className="relative overflow-hidden rounded-2xl border border-gray-100 bg-white p-5 shadow-sm hover:shadow-lg transition-all duration-300">
-      <div className="absolute -right-6 -top-6 h-20 w-20 rounded-full bg-gray-100/80" />
+    <div className="relative overflow-hidden rounded-2xl border border-gray-100 bg-white/95 p-5 shadow-[0_10px_28px_rgba(15,23,42,0.08)] hover:shadow-[0_16px_36px_rgba(59,130,246,0.18)] transition-all duration-300">
+      <div className="absolute -right-6 -top-6 h-20 w-20 rounded-full bg-blue-50/90" />
+      <div className="absolute -left-8 -bottom-8 h-16 w-16 rounded-full bg-indigo-50/80" />
       <div className="relative flex items-start justify-between">
         <div>
           <p className="text-xs font-semibold uppercase tracking-wider text-gray-500">{title}</p>
           <p className="mt-2 text-3xl font-extrabold text-gray-900">{value}</p>
           {subtitle && <p className="mt-1 text-xs text-gray-500">{subtitle}</p>}
         </div>
-        <div className={`rounded-xl bg-gradient-to-br p-2.5 text-white shadow ${accentMap[accent] || accentMap.blue}`}>
+        <div className={`rounded-xl bg-gradient-to-br p-2.5 text-white shadow-lg ${accentMap[accent] || accentMap.blue}`}>
           <Icon size={18} />
         </div>
       </div>
@@ -99,6 +104,7 @@ const ProgressStat = ({ label, value, tone = "blue", icon: Icon, helper }) => {
 const OwnerDashboard = () => {
   const API_BASE = (import.meta.env.VITE_API_URL || "http://localhost:5000/api").replace(/\/api\/?$/, "");
   const navigate = useNavigate();
+  
   const [stats, setStats] = useState(null);
   const [analytics, setAnalytics] = useState(null);
   const [alerts, setAlerts] = useState([]);
@@ -255,6 +261,31 @@ const OwnerDashboard = () => {
   const collectionRate = totalRentVolume > 0 ? (paidRent / totalRentVolume) * 100 : 0;
   const overdueRate = totalRentVolume > 0 ? (overdueRent / totalRentVolume) * 100 : 0;
   const analyticsRent = analytics?.rentSummary || {};
+  const onboardingSteps = [
+    {
+      id: "property",
+      label: "Create your first property",
+      done: (stats?.totalProperties || 0) > 0,
+      actionLabel: "Open Properties",
+      action: () => navigate("/owner/properties"),
+    },
+    {
+      id: "tenant",
+      label: "Assign your first tenant",
+      done: (stats?.activeLeases || 0) > 0,
+      actionLabel: "Open Tenants",
+      action: () => navigate("/owner/tenants"),
+    },
+    {
+      id: "rent",
+      label: "Generate first rent cycle",
+      done: (stats?.totalRentRecords || 0) > 0,
+      actionLabel: "Open Rent",
+      action: () => navigate("/owner/rent"),
+    },
+  ];
+  const onboardingDone = onboardingSteps.filter((step) => step.done).length;
+  const onboardingProgress = (onboardingDone / onboardingSteps.length) * 100;
 
   const exportAnalytics = async () => {
     try {
@@ -274,15 +305,19 @@ const OwnerDashboard = () => {
   };
 
   return (
-    <div className="space-y-8">
+    <div className="relative min-h-screen bg-gradient-to-br from-blue-100 via-purple-50 to-indigo-150 pb-8">
+      <div className="absolute top-0 right-0 w-96 h-96 bg-blue-400/20 rounded-full blur-3xl animate-blob" />
+      <div className="absolute bottom-0 left-0 w-96 h-96 bg-purple-400/20 rounded-full blur-3xl animate-blob-delay" />
+      <div className="relative z-10 space-y-8 px-4 sm:px-6 lg:px-8 max-w-7xl mx-auto">
       <PageHeader
         title="Dashboard"
-        subtitle="Welcome back! Here's an overview of your properties."
+        subtitle="Welcome back. Here is your live portfolio command center with clear priorities."
       />
 
-      <section className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-slate-900 via-blue-900 to-indigo-900 px-6 py-7 sm:px-8 sm:py-8 shadow-xl">
-        <div className="absolute -top-10 -right-10 h-32 w-32 rounded-full bg-blue-400/30 blur-2xl" />
-        <div className="absolute -bottom-12 -left-12 h-36 w-36 rounded-full bg-indigo-400/20 blur-2xl" />
+      <section className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-slate-950 via-blue-950 to-indigo-900 px-6 py-7 sm:px-8 sm:py-8 shadow-2xl animate-fade-up">
+        <div className="absolute -top-10 -right-10 h-32 w-32 rounded-full bg-blue-400/30 blur-2xl animate-blob" />
+        <div className="absolute -bottom-12 -left-12 h-36 w-36 rounded-full bg-indigo-400/20 blur-2xl animate-blob-delay" />
+        <div className="absolute inset-0 bg-[radial-gradient(circle,rgba(255,255,255,0.05)_1px,transparent_1px)] bg-[size:24px_24px]" />
         <div className="relative grid grid-cols-1 gap-6 md:grid-cols-3">
           <div className="md:col-span-2">
             <p className="text-xs font-semibold uppercase tracking-[0.18em] text-blue-200">Portfolio Snapshot</p>
@@ -308,14 +343,53 @@ const OwnerDashboard = () => {
         <MetricCard title="Open Requests" value={stats?.openMaintenanceRequests || 0} subtitle="Maintenance to resolve" icon={Wrench} accent="rose" />
       </div>
 
-      <section className="rounded-2xl border border-gray-100 bg-white p-5 shadow-sm">
+      <div className="grid grid-cols-1 gap-5 xl:grid-cols-2">
+        <section className="rounded-2xl border border-gray-100 bg-white/95 p-5 shadow-[0_8px_24px_rgba(15,23,42,0.06)]">
+          <div className="mb-4 flex items-start justify-between gap-3">
+            <div>
+              <h3 className="flex items-center gap-2 text-base font-semibold text-gray-900">
+                <Rocket size={18} className="text-indigo-600" /> Value in 3 Minutes Onboarding
+              </h3>
+              <p className="mt-1 text-xs text-gray-500">Finish these 3 actions to activate your full owner workflow.</p>
+            </div>
+            <span className="rounded-full bg-indigo-50 px-2.5 py-1 text-xs font-semibold text-indigo-700">
+              {onboardingDone}/{onboardingSteps.length} done
+            </span>
+          </div>
+          <div className="mb-4 h-2 rounded-full bg-gray-100">
+            <div className="h-2 rounded-full bg-gradient-to-r from-indigo-500 to-blue-500" style={{ width: `${onboardingProgress}%` }} />
+          </div>
+          <div className="space-y-3">
+            {onboardingSteps.map((step) => (
+              <div key={step.id} className="rounded-xl border border-gray-100 px-3 py-3 flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2.5">
+                  <Sparkles size={14} className={step.done ? "text-emerald-600" : "text-gray-400"} />
+                  <p className={`text-sm font-medium ${step.done ? "text-emerald-700" : "text-gray-700"}`}>{step.label}</p>
+                </div>
+                {step.done ? (
+                  <span className="text-xs font-semibold text-emerald-700">Completed</span>
+                ) : (
+                  <button type="button" onClick={step.action} className="rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-semibold text-gray-700 hover:bg-gray-50">
+                    {step.actionLabel}
+                  </button>
+                )}
+              </div>
+            ))}
+          </div>
+        </section>
+
+      </div>
+
+      <section className="rounded-2xl border border-gray-100 bg-white/95 p-5 shadow-[0_8px_24px_rgba(15,23,42,0.06)]">
         <div className="mb-4 flex items-center justify-between">
           <h3 className="flex items-center gap-2 text-base font-semibold text-gray-900">
             <TrendingUp size={18} className="text-emerald-600" /> Analytics Snapshot
           </h3>
-          <button type="button" onClick={exportAnalytics} className="rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-semibold text-gray-700 hover:bg-gray-50 inline-flex items-center gap-1.5">
-            <Download size={14} /> Export CSV
-          </button>
+          <div className="flex flex-wrap gap-2">
+            <button type="button" onClick={exportAnalytics} className="rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-semibold text-gray-700 hover:bg-gray-50 inline-flex items-center gap-1.5">
+              <Download size={14} /> Export CSV
+            </button>
+          </div>
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
           <div className="rounded-xl border border-emerald-100 bg-emerald-50 p-3">
@@ -336,7 +410,7 @@ const OwnerDashboard = () => {
         </div>
       </section>
 
-      <section className="rounded-2xl border border-gray-100 bg-white p-5 shadow-sm">
+      <section className="rounded-2xl border border-gray-100 bg-white/95 p-5 shadow-[0_8px_24px_rgba(15,23,42,0.06)]">
         <div className="mb-4 flex items-center justify-between">
           <h3 className="flex items-center gap-2 text-base font-semibold text-gray-900">
             <BellRing size={18} className="text-blue-600" /> Smart Alerts
@@ -362,7 +436,7 @@ const OwnerDashboard = () => {
               };
 
               return (
-                <div key={alert.id} className="rounded-xl border border-gray-100 p-4">
+                <div key={alert.id} className="rounded-xl border border-gray-100 bg-white p-4 shadow-sm hover:shadow-md transition-all duration-200">
                   <div className="flex items-start justify-between gap-3">
                     <div className="flex items-start gap-3">
                       <div className={`rounded-lg p-2 ${toneClasses[alert.tone] || toneClasses.blue}`}>
@@ -388,7 +462,7 @@ const OwnerDashboard = () => {
         )}
       </section>
 
-      <section className="rounded-2xl border border-gray-100 bg-white p-5 shadow-sm">
+      <section className="rounded-2xl border border-gray-100 bg-white/95 p-5 shadow-[0_8px_24px_rgba(15,23,42,0.06)]">
         <div className="mb-4 flex items-center justify-between">
           <h3 className="flex items-center gap-2 text-base font-semibold text-gray-900">
             <ShieldCheck size={18} className="text-emerald-600" /> Recent Compliance Uploads
@@ -444,7 +518,7 @@ const OwnerDashboard = () => {
       </div>
 
       <div className="grid grid-cols-1 gap-6 xl:grid-cols-3">
-        <div className="rounded-2xl border border-gray-100 bg-white p-5 shadow-sm xl:col-span-1">
+        <div className="rounded-2xl border border-gray-100 bg-white/95 p-5 shadow-[0_8px_24px_rgba(15,23,42,0.06)] xl:col-span-1">
           <h3 className="mb-5 flex items-center gap-2 text-base font-semibold text-gray-800">
             <ClipboardList size={18} className="text-blue-600" /> Performance Indicators
           </h3>
@@ -474,7 +548,7 @@ const OwnerDashboard = () => {
         </div>
 
         {/* Occupancy Chart */}
-        <div className="rounded-2xl border border-gray-100 bg-white p-5 shadow-sm xl:col-span-1">
+        <div className="rounded-2xl border border-gray-100 bg-white/95 p-5 shadow-[0_8px_24px_rgba(15,23,42,0.06)] xl:col-span-1">
           <h3 className="mb-4 text-base font-semibold text-gray-800">Occupancy Status</h3>
           {pieData.some((d) => d.value > 0) ? (
             <div className="space-y-4">
@@ -507,7 +581,7 @@ const OwnerDashboard = () => {
         </div>
 
         {/* Rent Status Chart */}
-        <div className="rounded-2xl border border-gray-100 bg-white p-5 shadow-sm xl:col-span-1">
+        <div className="rounded-2xl border border-gray-100 bg-white/95 p-5 shadow-[0_8px_24px_rgba(15,23,42,0.06)] xl:col-span-1">
           <h3 className="mb-4 text-base font-semibold text-gray-800">Rent Overview</h3>
           <ResponsiveContainer width="100%" height={220}>
             <BarChart data={rentData}>
@@ -523,6 +597,7 @@ const OwnerDashboard = () => {
             </BarChart>
           </ResponsiveContainer>
         </div>
+      </div>
       </div>
     </div>
   );

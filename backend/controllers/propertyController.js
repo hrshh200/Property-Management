@@ -11,6 +11,7 @@ const LeaseRenewal = require("../models/LeaseRenewal");
 const Notification = require("../models/Notification");
 const PDFDocument = require("pdfkit");
 const { StatusCodes } = require("http-status-codes");
+const { sendEventEmail } = require("../services/emailService");
 
 const toObjectId = (id) => mongoose.Types.ObjectId.createFromHexString(id);
 
@@ -20,6 +21,8 @@ const parseMoney = (value) => {
   return Number(num.toFixed(2));
 };
 
+const formatCurrency = (value) => `INR ${Number(value || 0).toLocaleString("en-IN", { maximumFractionDigits: 2 })}`;
+
 const csvEscape = (value) => {
   if (value === undefined || value === null) return "";
   return `"${String(value).replace(/"/g, '""')}"`;
@@ -28,6 +31,14 @@ const csvEscape = (value) => {
 const createNotification = async ({ recipient, role, title, message, type = "system", actionPath, metadata }) => {
   try {
     await Notification.create({ recipient, role, title, message, type, actionPath, metadata });
+  } catch (_) {
+    // Non-blocking side effect
+  }
+};
+
+const sendMailEvent = async (payload) => {
+  try {
+    await sendEventEmail(payload);
   } catch (_) {
     // Non-blocking side effect
   }
@@ -46,6 +57,8 @@ const startOfDay = (value) => {
   date.setHours(0, 0, 0, 0);
   return date;
 };
+
+
 
 // ─────────────────────────────────────────────
 //  AUTH
@@ -103,6 +116,23 @@ const signUp = async (req, res) => {
       phone: `${normalizedCountryCode}${normalizedPhoneDigits}`,
       role,
     });
+
+    await sendMailEvent({
+      to: user.email,
+      subject: `Welcome to PropManager (${role === "owner" ? "Owner" : "Tenant"} account)` ,
+      recipientName: user.firstName || user.name,
+      heading: "Your account is ready",
+      lead: "Thanks for signing up with PropManager. Your portal is now active and ready to use.",
+      highlights: [
+        `Role: ${role === "owner" ? "Property Owner" : "Tenant"}`,
+        `Email: ${user.email}`,
+        "You can now access dashboard, notifications and activity tracking.",
+      ],
+      actionLabel: "Open Dashboard",
+      actionPath: role === "owner" ? "/owner/dashboard" : "/tenant/dashboard",
+      accent: role === "owner" ? "#4f46e5" : "#0d9488",
+    });
+
     const token = jwt.sign(
       { userId: user._id, role: user.role, name: user.name, email: user.email },
       process.env.JWT_SECRET,
@@ -186,6 +216,8 @@ const signIn = async (req, res) => {
     res.status(StatusCodes.INTERNAL_SERVER_ERROR).json({ message: err.message });
   }
 };
+
+
 
 const getProfile = async (req, res) => {
   try {
@@ -464,7 +496,9 @@ const generateRentRecord = async (req, res) => {
     if (!leaseId || !month || !year || !dueDate) {
       return res.status(StatusCodes.BAD_REQUEST).json({ message: "leaseId, month, year, and dueDate are required." });
     }
-    const lease = await Lease.findOne({ _id: leaseId, owner: req.user.userId, isActive: true });
+    const lease = await Lease.findOne({ _id: leaseId, owner: req.user.userId, isActive: true })
+      .populate("tenant", "name email")
+      .populate("property", "propertyType address");
     if (!lease) return res.status(StatusCodes.NOT_FOUND).json({ message: "Active lease not found." });
 
     const existing = await RentPayment.findOne({ lease: leaseId, month, year });
@@ -485,6 +519,23 @@ const generateRentRecord = async (req, res) => {
       year,
       notes,
     });
+
+    await sendMailEvent({
+      to: lease.tenant?.email,
+      subject: `Rent due reminder: ${month} ${year}`,
+      recipientName: lease.tenant?.name,
+      heading: "New rent due has been generated",
+      lead: "A new rent record has been created for your lease.",
+      highlights: [
+        `Property: ${lease.property?.propertyType || "Property"} (${lease.property?.address?.city || "N/A"})`,
+        `Amount due: ${formatCurrency(lease.rentAmount)}`,
+        `Due date: ${new Date(dueDate).toLocaleDateString()}`,
+      ],
+      actionLabel: "View Rent Timeline",
+      actionPath: "/tenant/rent",
+      accent: "#0284c7",
+    });
+
     res.status(StatusCodes.CREATED).json({ message: "Rent record created.", rent });
   } catch (err) {
     res.status(StatusCodes.INTERNAL_SERVER_ERROR).json({ message: err.message });
@@ -541,6 +592,22 @@ const markRentPaid = async (req, res) => {
       metadata: { rentId: rent._id, receiptNumber },
     });
 
+    await sendMailEvent({
+      to: rent.tenant?.email,
+      subject: `Payment received: ${rent.month} ${rent.year}`,
+      recipientName: rent.tenant?.name,
+      heading: "Your rent payment is confirmed",
+      lead: "Your owner marked the rent payment as paid.",
+      highlights: [
+        `Month: ${rent.month} ${rent.year}`,
+        `Receipt: ${receiptNumber}`,
+        `Total paid: ${formatCurrency(totalAmount)}`,
+      ],
+      actionLabel: "Download Receipt",
+      actionPath: "/tenant/rent",
+      accent: "#16a34a",
+    });
+
     res.status(StatusCodes.OK).json({ message: "Rent marked as paid.", rent });
   } catch (err) {
     res.status(StatusCodes.INTERNAL_SERVER_ERROR).json({ message: err.message });
@@ -549,7 +616,10 @@ const markRentPaid = async (req, res) => {
 
 const markRentOverdue = async (req, res) => {
   try {
-    const records = await RentPayment.find({ owner: req.user.userId, status: "Pending", dueDate: { $lt: new Date() } }).populate("lease");
+    const records = await RentPayment.find({ owner: req.user.userId, status: "Pending", dueDate: { $lt: new Date() } })
+      .populate("lease")
+      .populate("tenant", "name email")
+      .populate("property", "propertyType address");
     let modifiedCount = 0;
 
     for (const record of records) {
@@ -571,6 +641,22 @@ const markRentOverdue = async (req, res) => {
         type: "rent",
         actionPath: "/tenant/rent",
         metadata: { rentId: record._id },
+      });
+
+      await sendMailEvent({
+        to: record.tenant?.email,
+        subject: `Rent overdue: ${record.month} ${record.year}`,
+        recipientName: record.tenant?.name,
+        heading: "Rent record moved to overdue",
+        lead: "Your due date has passed and a late fee was applied as per lease terms.",
+        highlights: [
+          `Property: ${record.property?.propertyType || "Property"} (${record.property?.address?.city || "N/A"})`,
+          `Late fee applied: ${formatCurrency(lateFeeAmount)}`,
+          `Total now due: ${formatCurrency(record.totalAmount)}`,
+        ],
+        actionLabel: "Check Rent Status",
+        actionPath: "/tenant/rent",
+        accent: "#dc2626",
       });
     }
 
@@ -675,6 +761,22 @@ const updateMaintenanceStatus = async (req, res) => {
       type: "maintenance",
       actionPath: "/tenant/maintenance",
       metadata: { requestId: request._id },
+    });
+
+    await sendMailEvent({
+      to: request.tenant?.email,
+      subject: `Maintenance update: ${request.category}`,
+      recipientName: request.tenant?.name,
+      heading: "Your maintenance request has a new status",
+      lead: "An update has been posted on your maintenance ticket.",
+      highlights: [
+        `Category: ${request.category}`,
+        `Current status: ${request.status}`,
+        comment ? `Owner note: ${comment}` : null,
+      ],
+      actionLabel: "Open Request",
+      actionPath: "/tenant/maintenance",
+      accent: "#0ea5e9",
     });
 
     res.status(StatusCodes.OK).json({ message: "Status updated.", request });
@@ -813,7 +915,10 @@ const createMaintenanceRequest = async (req, res) => {
     const allowedUrgency = ["Low", "Medium", "High", "Emergency"];
     const requestUrgency = allowedUrgency.includes(urgency) ? urgency : "Medium";
 
-    const lease = await Lease.findOne({ tenant: req.user.userId, isActive: true });
+    const lease = await Lease.findOne({ tenant: req.user.userId, isActive: true })
+      .populate("property", "propertyType address")
+      .populate("owner", "name email")
+      .populate("tenant", "name email");
     if (!lease) {
       return res.status(StatusCodes.BAD_REQUEST).json({ message: "No active lease found. Cannot raise request." });
     }
@@ -840,6 +945,39 @@ const createMaintenanceRequest = async (req, res) => {
       type: "maintenance",
       actionPath: "/owner/maintenance",
       metadata: { requestId: request._id },
+    });
+
+    await sendMailEvent({
+      to: lease.owner?.email,
+      subject: `New maintenance request (${requestUrgency})`,
+      recipientName: lease.owner?.name,
+      heading: "A tenant raised a maintenance request",
+      lead: "A new issue has been submitted and needs owner attention.",
+      highlights: [
+        `Tenant: ${lease.tenant?.name || "Tenant"}`,
+        `Issue: ${category}`,
+        `Urgency: ${requestUrgency}`,
+        `Property: ${lease.property?.propertyType || "Property"} (${lease.property?.address?.city || "N/A"})`,
+      ],
+      actionLabel: "Review Request",
+      actionPath: "/owner/maintenance",
+      accent: "#7c3aed",
+    });
+
+    await sendMailEvent({
+      to: lease.tenant?.email,
+      subject: "Maintenance request submitted",
+      recipientName: lease.tenant?.name,
+      heading: "Your maintenance request was submitted",
+      lead: "Your owner has been notified and the ticket is now active.",
+      highlights: [
+        `Issue: ${category}`,
+        `Urgency: ${requestUrgency}`,
+        `SLA due by: ${new Date(request.slaDueAt).toLocaleString()}`,
+      ],
+      actionLabel: "Track Request",
+      actionPath: "/tenant/maintenance",
+      accent: "#0ea5e9",
     });
 
     res.status(StatusCodes.CREATED).json({ message: "Maintenance request created.", request });
@@ -872,7 +1010,10 @@ const createMoveOutRequest = async (req, res) => {
       return res.status(StatusCodes.BAD_REQUEST).json({ message: "Requested move-out date is required." });
     }
 
-    const lease = await Lease.findOne({ tenant: req.user.userId, isActive: true });
+    const lease = await Lease.findOne({ tenant: req.user.userId, isActive: true })
+      .populate("property", "propertyType address")
+      .populate("owner", "name email")
+      .populate("tenant", "name email");
     if (!lease) {
       return res.status(StatusCodes.BAD_REQUEST).json({ message: "No active lease found." });
     }
@@ -901,6 +1042,47 @@ const createMoveOutRequest = async (req, res) => {
       owner: lease.owner,
       requestedMoveOutDate: moveOutDate,
       reason,
+    });
+
+    await createNotification({
+      recipient: lease.owner?._id || lease.owner,
+      role: "owner",
+      title: "New move-out request",
+      message: `${lease.tenant?.name || "Tenant"} submitted a move-out request for review.`,
+      type: "moveout",
+      actionPath: "/owner/move-out",
+      metadata: { requestId: request._id },
+    });
+
+    await sendMailEvent({
+      to: lease.owner?.email,
+      subject: "Move-out request submitted by tenant",
+      recipientName: lease.owner?.name,
+      heading: "A move-out request needs your decision",
+      lead: "Your tenant has submitted a move-out request.",
+      highlights: [
+        `Tenant: ${lease.tenant?.name || "Tenant"}`,
+        `Requested date: ${new Date(moveOutDate).toLocaleDateString()}`,
+        `Reason: ${reason || "No reason shared"}`,
+      ],
+      actionLabel: "Review Move-Out",
+      actionPath: "/owner/move-out",
+      accent: "#f97316",
+    });
+
+    await sendMailEvent({
+      to: lease.tenant?.email,
+      subject: "Your move-out request is submitted",
+      recipientName: lease.tenant?.name,
+      heading: "Move-out request submitted",
+      lead: "We have sent your request to the owner. You will be notified once reviewed.",
+      highlights: [
+        `Requested date: ${new Date(moveOutDate).toLocaleDateString()}`,
+        `Property: ${lease.property?.propertyType || "Property"} (${lease.property?.address?.city || "N/A"})`,
+      ],
+      actionLabel: "Track Request",
+      actionPath: "/tenant/dashboard",
+      accent: "#0284c7",
     });
 
     res.status(StatusCodes.CREATED).json({ message: "Move-out request submitted.", request });
@@ -1032,6 +1214,24 @@ const decideMoveOutRequest = async (req, res) => {
       type: "moveout",
       actionPath: "/tenant/dashboard",
       metadata: { requestId: updatedRequest._id },
+    });
+
+    await sendMailEvent({
+      to: updatedRequest.tenant?.email,
+      subject: `Move-out request ${updatedRequest.status.toLowerCase()}`,
+      recipientName: updatedRequest.tenant?.name,
+      heading: `Your move-out request was ${updatedRequest.status.toLowerCase()}`,
+      lead: updatedRequest.status === "Approved"
+        ? "Your owner approved the move-out request. Please review the details below."
+        : "Your owner reviewed the request and did not approve it at this time.",
+      highlights: [
+        updatedRequest.approvedLastStayingDate ? `Last staying date: ${new Date(updatedRequest.approvedLastStayingDate).toLocaleDateString()}` : null,
+        updatedRequest.closingFormalities ? `Closing formalities: ${updatedRequest.closingFormalities}` : null,
+        updatedRequest.ownerNote ? `Owner note: ${updatedRequest.ownerNote}` : null,
+      ],
+      actionLabel: "Open Dashboard",
+      actionPath: "/tenant/dashboard",
+      accent: updatedRequest.status === "Approved" ? "#16a34a" : "#dc2626",
     });
 
     res.status(StatusCodes.OK).json({ message: "Move-out request updated.", request: updatedRequest });
@@ -1265,7 +1465,9 @@ const createLeaseRenewal = async (req, res) => {
       return res.status(StatusCodes.BAD_REQUEST).json({ message: "All renewal proposal fields are required." });
     }
 
-    const lease = await Lease.findOne({ _id: leaseId, owner: req.user.userId, isActive: true });
+    const lease = await Lease.findOne({ _id: leaseId, owner: req.user.userId, isActive: true })
+      .populate("tenant", "name email")
+      .populate("property", "propertyType address");
     if (!lease) return res.status(StatusCodes.NOT_FOUND).json({ message: "Active lease not found." });
 
     const existingPending = await LeaseRenewal.findOne({ lease: leaseId, status: "Pending" });
@@ -1310,6 +1512,22 @@ const createLeaseRenewal = async (req, res) => {
       type: "renewal",
       actionPath: "/tenant/dashboard",
       metadata: { renewalId: renewal._id },
+    });
+
+    await sendMailEvent({
+      to: lease.tenant?.email,
+      subject: "New lease renewal proposal",
+      recipientName: lease.tenant?.name,
+      heading: "Your owner proposed a lease renewal",
+      lead: "Review the proposed dates and rent, then accept or reject from your portal.",
+      highlights: [
+        `Proposed rent: ${formatCurrency(renewal.proposedRentAmount)}`,
+        `Term: ${new Date(renewal.proposedLeaseStartDate).toLocaleDateString()} to ${new Date(renewal.proposedLeaseEndDate).toLocaleDateString()}`,
+        `Property: ${lease.property?.propertyType || "Property"} (${lease.property?.address?.city || "N/A"})`,
+      ],
+      actionLabel: "Review Renewal",
+      actionPath: "/tenant/dashboard",
+      accent: "#7c3aed",
     });
 
     res.status(StatusCodes.CREATED).json({ message: "Renewal proposal created.", renewal });
@@ -1413,6 +1631,22 @@ const decideLeaseRenewal = async (req, res) => {
       type: "renewal",
       actionPath: "/owner/tenants",
       metadata: { renewalId: renewal._id, status },
+    });
+
+    const owner = await User.findById(renewal.owner).select("name email");
+    await sendMailEvent({
+      to: owner?.email,
+      subject: `Renewal proposal ${status.toLowerCase()} by tenant`,
+      recipientName: owner?.name,
+      heading: `Tenant ${status.toLowerCase()} your renewal proposal`,
+      lead: "A tenant decision has been recorded on your lease renewal request.",
+      highlights: [
+        `Decision: ${status}`,
+        decisionNote ? `Tenant note: ${decisionNote}` : null,
+      ],
+      actionLabel: "Open Tenant & Lease",
+      actionPath: "/owner/tenants",
+      accent: status === "Accepted" ? "#16a34a" : "#dc2626",
     });
 
     res.status(StatusCodes.OK).json({ message: `Renewal ${status.toLowerCase()}.`, renewal });
