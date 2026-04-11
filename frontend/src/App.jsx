@@ -12,12 +12,16 @@ import LandingPage from "./pages/LandingPage";
 // Auth
 import Login from "./pages/auth/Login";
 import Register from "./pages/auth/Register";
+import ForgotPassword from "./pages/auth/ForgotPassword";
 import Profile from "./pages/Profile";
+import Notifications from "./pages/Notifications";
 
 // Owner
 import OwnerDashboard from "./pages/owner/OwnerDashboard";
 import Properties from "./pages/owner/Properties";
 import TenantsLeases from "./pages/owner/TenantsLeases";
+import LeaseRenewals from "./pages/owner/LeaseRenewals";
+import MoveOutRequests from "./pages/owner/MoveOutRequests";
 import RentManagement from "./pages/owner/RentManagement";
 import Maintenance from "./pages/owner/Maintenance";
 import Vacancies from "./pages/owner/Vacancies";
@@ -37,6 +41,7 @@ function App() {
           <Route path="/" element={<LandingPage />} />
           <Route path="/login" element={<Login />} />
           <Route path="/register" element={<Register />} />
+          <Route path="/forgot-password" element={<ForgotPassword />} />
 
           {/* Owner Routes */}
           <Route
@@ -51,9 +56,12 @@ function App() {
             <Route path="dashboard" element={<OwnerDashboard />} />
             <Route path="properties" element={<Properties />} />
             <Route path="tenants" element={<TenantsLeases />} />
+            <Route path="renewals" element={<LeaseRenewals />} />
+            <Route path="move-out" element={<MoveOutRequests />} />
             <Route path="rent" element={<RentManagement />} />
             <Route path="maintenance" element={<Maintenance />} />
             <Route path="vacancies" element={<Vacancies />} />
+            <Route path="notifications" element={<Notifications />} />
             <Route path="profile" element={<Profile />} />
           </Route>
 
@@ -70,6 +78,7 @@ function App() {
             <Route path="dashboard" element={<TenantDashboard />} />
             <Route path="rent" element={<TenantRent />} />
             <Route path="maintenance" element={<TenantMaintenance />} />
+            <Route path="notifications" element={<Notifications />} />
             <Route path="profile" element={<Profile />} />
           </Route>
 

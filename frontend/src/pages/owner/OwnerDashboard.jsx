@@ -20,6 +20,7 @@ import {
   ScrollText,
   ShieldCheck,
   FileText,
+  Download,
 } from "lucide-react";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from "recharts";
 import { PageHeader } from "../../components/UI";
@@ -99,6 +100,7 @@ const OwnerDashboard = () => {
   const API_BASE = (import.meta.env.VITE_API_URL || "http://localhost:5000/api").replace(/\/api\/?$/, "");
   const navigate = useNavigate();
   const [stats, setStats] = useState(null);
+  const [analytics, setAnalytics] = useState(null);
   const [alerts, setAlerts] = useState([]);
   const [recentComplianceDocs, setRecentComplianceDocs] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -106,15 +108,17 @@ const OwnerDashboard = () => {
   useEffect(() => {
     const fetchStats = async () => {
       try {
-        const [{ data }, { data: leaseData }, { data: rentData }, { data: maintenanceData }, { data: complianceData }] = await Promise.all([
+        const [{ data }, { data: leaseData }, { data: rentData }, { data: maintenanceData }, { data: complianceData }, { data: analyticsData }] = await Promise.all([
           api.get("/owner/dashboard"),
           api.get("/owner/leases"),
           api.get("/owner/rent"),
           api.get("/owner/maintenance"),
           api.get("/owner/compliance-documents"),
+          api.get("/owner/analytics"),
         ]);
 
         setStats(data.stats);
+        setAnalytics(analyticsData.analytics || null);
 
         const today = new Date();
         const within30Days = new Date();
@@ -250,6 +254,24 @@ const OwnerDashboard = () => {
   const totalRentVolume = paidRent + pendingRent + overdueRent;
   const collectionRate = totalRentVolume > 0 ? (paidRent / totalRentVolume) * 100 : 0;
   const overdueRate = totalRentVolume > 0 ? (overdueRent / totalRentVolume) * 100 : 0;
+  const analyticsRent = analytics?.rentSummary || {};
+
+  const exportAnalytics = async () => {
+    try {
+      const response = await api.get("/owner/analytics/export", { responseType: "blob" });
+      const blob = new Blob([response.data], { type: "text/csv;charset=utf-8;" });
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `analytics-${Date.now()}.csv`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+    } catch {
+      toast.error("Unable to export analytics.");
+    }
+  };
 
   return (
     <div className="space-y-8">
@@ -285,6 +307,34 @@ const OwnerDashboard = () => {
         <MetricCard title="Pending Rent" value={formatCurrency(pendingRent)} subtitle="Awaiting payment" icon={Wallet} accent="amber" />
         <MetricCard title="Open Requests" value={stats?.openMaintenanceRequests || 0} subtitle="Maintenance to resolve" icon={Wrench} accent="rose" />
       </div>
+
+      <section className="rounded-2xl border border-gray-100 bg-white p-5 shadow-sm">
+        <div className="mb-4 flex items-center justify-between">
+          <h3 className="flex items-center gap-2 text-base font-semibold text-gray-900">
+            <TrendingUp size={18} className="text-emerald-600" /> Analytics Snapshot
+          </h3>
+          <button type="button" onClick={exportAnalytics} className="rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-semibold text-gray-700 hover:bg-gray-50 inline-flex items-center gap-1.5">
+            <Download size={14} /> Export CSV
+          </button>
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <div className="rounded-xl border border-emerald-100 bg-emerald-50 p-3">
+            <p className="text-xs font-semibold uppercase tracking-wider text-emerald-700">Paid Revenue</p>
+            <p className="mt-1 text-xl font-bold text-emerald-900">{formatCurrency(analyticsRent.paid || 0)}</p>
+            <p className="text-xs text-emerald-800 mt-1">{analyticsRent.paidCount || 0} paid records</p>
+          </div>
+          <div className="rounded-xl border border-amber-100 bg-amber-50 p-3">
+            <p className="text-xs font-semibold uppercase tracking-wider text-amber-700">Pending Volume</p>
+            <p className="mt-1 text-xl font-bold text-amber-900">{formatCurrency(analyticsRent.pending || 0)}</p>
+            <p className="text-xs text-amber-800 mt-1">{analyticsRent.pendingCount || 0} pending records</p>
+          </div>
+          <div className="rounded-xl border border-red-100 bg-red-50 p-3">
+            <p className="text-xs font-semibold uppercase tracking-wider text-red-700">Overdue Volume</p>
+            <p className="mt-1 text-xl font-bold text-red-900">{formatCurrency(analyticsRent.overdue || 0)}</p>
+            <p className="text-xs text-red-800 mt-1">{analyticsRent.overdueCount || 0} overdue records</p>
+          </div>
+        </div>
+      </section>
 
       <section className="rounded-2xl border border-gray-100 bg-white p-5 shadow-sm">
         <div className="mb-4 flex items-center justify-between">

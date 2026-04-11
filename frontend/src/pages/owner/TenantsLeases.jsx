@@ -19,6 +19,8 @@ import {
   FileText,
   Upload,
   ShieldCheck,
+  RefreshCcw,
+  Download,
 } from "lucide-react";
 import { PageHeader, Modal, StatusBadge, EmptyState } from "../../components/UI";
 import api from "../../utils/api";
@@ -28,6 +30,18 @@ import toast from "react-hot-toast";
 const TenantsLeases = () => {
   const DOC_TYPES = ["Rent Agreement", "Aadhaar Card", "PAN Card", "Police Verification", "Other"];
   const API_BASE = (import.meta.env.VITE_API_URL || "http://localhost:5000/api").replace(/\/api\/?$/, "");
+  const toInputDate = (value) => {
+    if (!value) return "";
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return "";
+    return date.toISOString().slice(0, 10);
+  };
+  const shiftDaysInput = (value, days) => {
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return "";
+    date.setDate(date.getDate() + days);
+    return date.toISOString().slice(0, 10);
+  };
 
   const [leases, setLeases] = useState([]);
   const [tenantUsers, setTenantUsers] = useState([]);
@@ -47,6 +61,9 @@ const TenantsLeases = () => {
   const [selectedLeaseForDocs, setSelectedLeaseForDocs] = useState(null);
   const [complianceDocs, setComplianceDocs] = useState([]);
   const [docsLoading, setDocsLoading] = useState(false);
+  const [renewals, setRenewals] = useState([]);
+  const [renewalModal, setRenewalModal] = useState(false);
+  const [renewalLease, setRenewalLease] = useState(null);
   const [decisionForm, setDecisionForm] = useState({
     status: "Approved",
     approvedLastStayingDate: "",
@@ -55,6 +72,10 @@ const TenantsLeases = () => {
   });
   const [completionForm, setCompletionForm] = useState({
     completionNote: "Tenant handed over keys, property inspected, and move-out formalities completed.",
+    unpaidRentAmount: "0",
+    maintenanceDeduction: "0",
+    otherDeduction: "0",
+    settlementNote: "",
   });
   const [docForm, setDocForm] = useState({
     documentType: "Rent Agreement",
@@ -71,22 +92,26 @@ const TenantsLeases = () => {
     rentAmount: "",
     securityDeposit: "",
     rentDueDay: "1",
+    lateFeeType: "fixed",
+    lateFeeValue: "0",
   });
 
   const [editForm, setEditForm] = useState({});
 
   const fetchAll = async () => {
     try {
-      const [leasesRes, tenantsRes, propsRes, moveOutRes] = await Promise.all([
+      const [leasesRes, tenantsRes, propsRes, moveOutRes, renewalRes] = await Promise.all([
         api.get("/owner/leases"),
         api.get("/owner/tenant-users"),
         api.get("/owner/properties"),
         api.get("/owner/move-out"),
+        api.get("/owner/renewals"),
       ]);
       setLeases(leasesRes.data.leases);
       setTenantUsers(tenantsRes.data.tenants);
       setProperties(propsRes.data.properties);
       setMoveOutRequests(moveOutRes.data.requests || []);
+      setRenewals(renewalRes.data.renewals || []);
     } catch {
       toast.error("Failed to load data.");
     } finally {
@@ -119,6 +144,8 @@ const TenantsLeases = () => {
       rentAmount: lease.rentAmount,
       securityDeposit: lease.securityDeposit,
       rentDueDay: lease.rentDueDay,
+      lateFeeType: lease.lateFeeType || "fixed",
+      lateFeeValue: lease.lateFeeValue ?? 0,
     });
     setEditModal(true);
   };
@@ -180,6 +207,16 @@ const TenantsLeases = () => {
       .toLowerCase();
     return haystack.includes(normalizedSearch);
   });
+
+  const latestRenewalByLeaseId = renewals.reduce((acc, renewal) => {
+    const leaseId = renewal.lease?._id || renewal.lease;
+    if (!leaseId) return acc;
+    const existing = acc[leaseId];
+    if (!existing || new Date(renewal.createdAt) > new Date(existing.createdAt)) {
+      acc[leaseId] = renewal;
+    }
+    return acc;
+  }, {});
 
   const openDecisionModal = (request) => {
     setActiveRequest(request);
@@ -272,6 +309,10 @@ const TenantsLeases = () => {
     setCompletionRequest(request);
     setCompletionForm({
       completionNote: "Tenant handed over keys, property inspected, and move-out formalities completed.",
+      unpaidRentAmount: String(request.outstandingDueAmount || 0),
+      maintenanceDeduction: "0",
+      otherDeduction: "0",
+      settlementNote: "",
     });
     setCompletionModal(true);
   };
@@ -287,6 +328,10 @@ const TenantsLeases = () => {
       setSaving(true);
       await api.patch(`/owner/move-out/${completionRequest._id}/complete`, {
         completionNote: completionForm.completionNote,
+        unpaidRentAmount: completionForm.unpaidRentAmount,
+        maintenanceDeduction: completionForm.maintenanceDeduction,
+        otherDeduction: completionForm.otherDeduction,
+        settlementNote: completionForm.settlementNote,
       });
       toast.success("Move-out completed. Lease closed and property marked vacant.");
       setCompletionModal(false);
@@ -296,6 +341,71 @@ const TenantsLeases = () => {
       toast.error(err.response?.data?.message || "Failed to complete move-out.");
     } finally {
       setSaving(false);
+    }
+  };
+
+  const openRenewalModal = (lease) => {
+    setRenewalLease(lease);
+    setRenewalModal(true);
+  };
+
+  const proposeRenewal = async (e) => {
+    e.preventDefault();
+    if (!renewalLease?._id) return;
+    const form = e.currentTarget;
+    const payload = {
+      leaseId: renewalLease._id,
+      proposedRentAmount: form.proposedRentAmount.value,
+      proposedLeaseStartDate: form.proposedLeaseStartDate.value,
+      proposedLeaseEndDate: form.proposedLeaseEndDate.value,
+      note: form.note.value,
+    };
+    const currentEndDate = renewalLease.leaseEndDate ? new Date(renewalLease.leaseEndDate) : null;
+    const proposedStartDate = new Date(payload.proposedLeaseStartDate);
+    const proposedEndDate = new Date(payload.proposedLeaseEndDate);
+    if (currentEndDate && proposedStartDate < currentEndDate) {
+      toast.error("Renewal must start on or after the current lease end date.");
+      return;
+    }
+    if (proposedEndDate <= proposedStartDate) {
+      toast.error("Renewal end date must be after start date.");
+      return;
+    }
+    try {
+      setSaving(true);
+      await api.post("/owner/renewals", payload);
+      toast.success("Renewal proposal sent to tenant.");
+      setRenewalModal(false);
+      setRenewalLease(null);
+      fetchAll();
+    } catch (err) {
+      toast.error(err.response?.data?.message || "Failed to send renewal.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const cancelRenewal = async (id) => {
+    try {
+      await api.patch(`/owner/renewals/${id}/cancel`);
+      toast.success("Renewal cancelled.");
+      fetchAll();
+    } catch {
+      toast.error("Failed to cancel renewal.");
+    }
+  };
+
+  const verifyDocument = async (docId, verificationStatus) => {
+    try {
+      await api.patch(`/owner/compliance-documents/${docId}/verify`, {
+        verificationStatus,
+      });
+      toast.success(`Document ${verificationStatus.toLowerCase()}.`);
+      if (selectedLeaseForDocs?._id) {
+        await loadComplianceDocs(selectedLeaseForDocs._id);
+      }
+    } catch (err) {
+      toast.error(err.response?.data?.message || "Verification failed.");
     }
   };
 
@@ -445,6 +555,7 @@ const TenantsLeases = () => {
         )}
       </div>
 
+      {/* Search */}
       <div className="rounded-2xl border border-gray-100 bg-white p-4 shadow-sm">
         <div className="flex items-center rounded-lg border border-gray-300 overflow-hidden focus-within:ring-2 focus-within:ring-blue-500 focus-within:border-transparent">
           <div className="h-full px-3 py-2.5 bg-gray-50 border-r border-gray-200 text-gray-500 flex items-center">
@@ -459,12 +570,20 @@ const TenantsLeases = () => {
         </div>
       </div>
 
+      {/* Lease Cards */}
       {filteredLeases.length === 0 ? (
         <EmptyState message="No active leases. Assign a tenant to get started." icon={Users} />
       ) : (
         <div className="space-y-4">
           {filteredLeases.map((l) => (
             <div key={l._id} className="rounded-2xl border border-gray-100 bg-white p-5 shadow-sm hover:shadow-md transition-shadow">
+              {latestRenewalByLeaseId[l._id] ? (
+                <div className="mb-4 rounded-xl border border-emerald-100 bg-emerald-50 px-3 py-2 text-xs text-emerald-800">
+                  <p className="font-semibold uppercase tracking-wider">Renewal Timeline</p>
+                  <p className="mt-1">Current: {formatCurrency(l.rentAmount)} | {new Date(l.leaseStartDate).toLocaleDateString()} - {new Date(l.leaseEndDate).toLocaleDateString()}</p>
+                  <p className="mt-1 font-semibold">Next: {formatCurrency(latestRenewalByLeaseId[l._id].proposedRentAmount)} | {new Date(latestRenewalByLeaseId[l._id].proposedLeaseStartDate).toLocaleDateString()} - {new Date(latestRenewalByLeaseId[l._id].proposedLeaseEndDate).toLocaleDateString()} ({latestRenewalByLeaseId[l._id].status})</p>
+                </div>
+              ) : null}
               <div className="flex flex-col lg:flex-row lg:items-start justify-between gap-4">
                 <div className="space-y-3 flex-1">
                   <div className="flex items-center gap-2 flex-wrap">
@@ -486,10 +605,9 @@ const TenantsLeases = () => {
                       {l.property?.address?.street}, {l.property?.address?.city}, {l.property?.address?.state}
                     </p>
                   </div>
-
-                  <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-2 text-sm">
-                    <div className="rounded-lg border border-gray-100 px-3 py-2 bg-white">
                       <p className="text-xs text-gray-500">Rent</p>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-2 text-sm">
+                      <div className="rounded-lg border border-gray-100 px-3 py-2 bg-white">
                       <p className="font-semibold text-gray-900">{formatCurrency(l.rentAmount)}/mo</p>
                     </div>
                     <div className="rounded-lg border border-gray-100 px-3 py-2 bg-white">
@@ -499,6 +617,12 @@ const TenantsLeases = () => {
                     <div className="rounded-lg border border-gray-100 px-3 py-2 bg-white">
                       <p className="text-xs text-gray-500">Due Day</p>
                       <p className="font-semibold text-gray-900">{l.rentDueDay}</p>
+                    </div>
+                    <div className="rounded-lg border border-gray-100 px-3 py-2 bg-white">
+                      <p className="text-xs text-gray-500">Late Fee</p>
+                      <p className="font-semibold text-gray-900">
+                        {l.lateFeeType === "percent" ? `${Number(l.lateFeeValue || 0)}%` : formatCurrency(l.lateFeeValue || 0)}
+                      </p>
                     </div>
                     <div className="rounded-lg border border-gray-100 px-3 py-2 bg-white">
                       <p className="text-xs text-gray-500">Lease Start</p>
@@ -515,6 +639,9 @@ const TenantsLeases = () => {
                 </div>
 
                 <div className="flex gap-2 sm:flex-row lg:flex-col">
+                  <button onClick={() => openRenewalModal(l)} className="btn-secondary flex items-center gap-1.5 text-sm py-1.5 px-3">
+                    <RefreshCcw size={14} /> Renewal
+                  </button>
                   <button onClick={() => openDocsModal(l)} className="btn-secondary flex items-center gap-1.5 text-sm py-1.5 px-3">
                     <FileText size={14} /> Docs
                   </button>
@@ -532,6 +659,7 @@ const TenantsLeases = () => {
       )}
 
       {/* Assign Tenant Modal */}
+      
       <Modal isOpen={assignModal} onClose={() => setAssignModal(false)} title="Assign Tenant to Property">
         <form onSubmit={handleAssign} className="space-y-4">
           <div>
@@ -575,6 +703,17 @@ const TenantsLeases = () => {
               <label className="block text-sm font-medium text-gray-700 mb-1">Rent Due Day</label>
               <input type="number" value={assignForm.rentDueDay} onChange={(e) => setAssignForm({ ...assignForm, rentDueDay: e.target.value })} min={1} max={31} className="input-field" />
             </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Late Fee Type</label>
+              <select value={assignForm.lateFeeType} onChange={(e) => setAssignForm({ ...assignForm, lateFeeType: e.target.value })} className="input-field">
+                <option value="fixed">Fixed Amount</option>
+                <option value="percent">Percent</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Late Fee Value</label>
+              <input type="number" value={assignForm.lateFeeValue} onChange={(e) => setAssignForm({ ...assignForm, lateFeeValue: e.target.value })} min={0} step="0.01" className="input-field" />
+            </div>
           </div>
           <div className="flex justify-end gap-3 pt-2">
             <button type="button" onClick={() => setAssignModal(false)} className="btn-secondary">Cancel</button>
@@ -606,6 +745,17 @@ const TenantsLeases = () => {
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Rent Due Day</label>
               <input type="number" value={editForm.rentDueDay} onChange={(e) => setEditForm({ ...editForm, rentDueDay: e.target.value })} min={1} max={31} className="input-field" />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Late Fee Type</label>
+              <select value={editForm.lateFeeType || "fixed"} onChange={(e) => setEditForm({ ...editForm, lateFeeType: e.target.value })} className="input-field">
+                <option value="fixed">Fixed Amount</option>
+                <option value="percent">Percent</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Late Fee Value</label>
+              <input type="number" value={editForm.lateFeeValue ?? 0} onChange={(e) => setEditForm({ ...editForm, lateFeeValue: e.target.value })} min={0} step="0.01" className="input-field" />
             </div>
           </div>
           <div className="flex justify-end gap-3 pt-2">
@@ -706,6 +856,25 @@ const TenantsLeases = () => {
             />
           </div>
 
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Unpaid Rent</label>
+              <input type="number" min={0} step="0.01" value={completionForm.unpaidRentAmount} onChange={(e) => setCompletionForm({ ...completionForm, unpaidRentAmount: e.target.value })} className="input-field" />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Maintenance Deduction</label>
+              <input type="number" min={0} step="0.01" value={completionForm.maintenanceDeduction} onChange={(e) => setCompletionForm({ ...completionForm, maintenanceDeduction: e.target.value })} className="input-field" />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Other Deduction</label>
+              <input type="number" min={0} step="0.01" value={completionForm.otherDeduction} onChange={(e) => setCompletionForm({ ...completionForm, otherDeduction: e.target.value })} className="input-field" />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Settlement Note</label>
+              <input value={completionForm.settlementNote} onChange={(e) => setCompletionForm({ ...completionForm, settlementNote: e.target.value })} className="input-field" placeholder="Optional note" />
+            </div>
+          </div>
+
           <div className="flex justify-end gap-3 pt-2">
             <button type="button" onClick={() => setCompletionModal(false)} className="btn-secondary">Cancel</button>
             <button type="submit" disabled={saving} className="btn-primary">
@@ -790,24 +959,83 @@ const TenantsLeases = () => {
             ) : (
               <div className="max-h-56 overflow-y-auto space-y-2">
                 {complianceDocs.map((doc) => (
-                  <a
-                    key={doc._id}
-                    href={`${API_BASE}${doc.filePath}`}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="block rounded-lg border border-gray-100 px-3 py-2 hover:bg-gray-50"
-                  >
+                  <div key={doc._id} className="rounded-lg border border-gray-100 px-3 py-2">
+                    <a
+                      href={`${API_BASE}${doc.filePath}`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="block hover:bg-gray-50"
+                    >
                     <p className="text-sm font-semibold text-gray-900">{doc.documentType}</p>
                     <p className="text-xs text-gray-600">
                       Uploaded by {doc.uploadedByRole} on {new Date(doc.createdAt).toLocaleDateString()}
                     </p>
                     {doc.documentNumber ? <p className="text-xs text-gray-500">No: {doc.documentNumber}</p> : null}
-                  </a>
+                    </a>
+                    <div className="mt-2 flex items-center justify-between gap-2">
+                      <span className="text-[11px] font-semibold text-gray-600">Status: {doc.verificationStatus || "Pending"}</span>
+                      <div className="flex gap-1">
+                        <button type="button" onClick={() => verifyDocument(doc._id, "Verified")} className="rounded-md border border-emerald-200 bg-emerald-50 px-2 py-1 text-[11px] font-semibold text-emerald-700">Verify</button>
+                        <button type="button" onClick={() => verifyDocument(doc._id, "Rejected")} className="rounded-md border border-red-200 bg-red-50 px-2 py-1 text-[11px] font-semibold text-red-700">Reject</button>
+                      </div>
+                    </div>
+                  </div>
                 ))}
               </div>
             )}
           </div>
         </div>
+      </Modal>
+
+      <Modal isOpen={renewalModal} onClose={() => setRenewalModal(false)} title="Propose Lease Renewal">
+        {renewalLease ? (
+          <form onSubmit={proposeRenewal} className="space-y-4">
+            <div className="rounded-lg border border-blue-100 bg-blue-50 px-3 py-2 text-xs text-blue-800">
+              <p className="font-semibold uppercase tracking-wider">Current Lease</p>
+              <p className="mt-1">Rent: {formatCurrency(renewalLease.rentAmount)} | {new Date(renewalLease.leaseStartDate).toLocaleDateString()} - {new Date(renewalLease.leaseEndDate).toLocaleDateString()}</p>
+              <p className="mt-1">Renewal should begin from current lease end for a clean tenant timeline.</p>
+            </div>
+            <div className="rounded-lg border border-gray-100 bg-gray-50 px-3 py-2 text-sm text-gray-700">
+              {renewalLease.tenant?.name} - {renewalLease.property?.propertyType}, {renewalLease.property?.address?.city}
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Proposed Rent</label>
+              <input name="proposedRentAmount" type="number" min={0} step="0.01" defaultValue={renewalLease.rentAmount} className="input-field" required />
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Start Date</label>
+                <input
+                  name="proposedLeaseStartDate"
+                  type="date"
+                  className="input-field"
+                  defaultValue={shiftDaysInput(renewalLease.leaseEndDate, 1) || toInputDate(renewalLease.leaseEndDate)}
+                  min={toInputDate(renewalLease.leaseEndDate)}
+                  required
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">End Date</label>
+                <input
+                  name="proposedLeaseEndDate"
+                  type="date"
+                  className="input-field"
+                  defaultValue={shiftDaysInput(renewalLease.leaseEndDate, 365)}
+                  min={shiftDaysInput(renewalLease.leaseEndDate, 1) || toInputDate(renewalLease.leaseEndDate)}
+                  required
+                />
+              </div>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Note</label>
+              <textarea name="note" rows={3} className="input-field" placeholder="Optional message for tenant" />
+            </div>
+            <div className="flex justify-end gap-3 pt-2">
+              <button type="button" onClick={() => setRenewalModal(false)} className="btn-secondary">Cancel</button>
+              <button type="submit" disabled={saving} className="btn-primary">{saving ? "Sending..." : "Send Proposal"}</button>
+            </div>
+          </form>
+        ) : null}
       </Modal>
     </div>
   );

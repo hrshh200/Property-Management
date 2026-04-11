@@ -6,6 +6,15 @@ import { PageHeader } from "../components/UI";
 import { setCredentials } from "../app/slices/authSlice";
 import api from "../utils/api";
 
+const COUNTRY_CODES = [
+  { value: "+1", label: "US (+1)" },
+  { value: "+44", label: "UK (+44)" },
+  { value: "+61", label: "AU (+61)" },
+  { value: "+65", label: "SG (+65)" },
+  { value: "+91", label: "IN (+91)" },
+  { value: "+971", label: "AE (+971)" },
+];
+
 const Profile = () => {
   const dispatch = useDispatch();
   const { user, token } = useSelector((state) => state.auth);
@@ -13,7 +22,11 @@ const Profile = () => {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [form, setForm] = useState({
-    name: "",
+    firstName: "",
+    middleName: "",
+    lastName: "",
+    email: "",
+    countryCode: "+91",
     phone: "",
   });
 
@@ -21,9 +34,20 @@ const Profile = () => {
     const fetchProfile = async () => {
       try {
         const { data } = await api.get("/auth/profile");
+        const userProfile = data.user || {};
+        const fallbackCode = userProfile.countryCode || "+91";
+        const rawPhone = (userProfile.phone || "").toString();
+        const normalizedPhone = rawPhone.startsWith(fallbackCode)
+          ? rawPhone.slice(fallbackCode.length)
+          : rawPhone.replace(/\D/g, "");
+
         setForm({
-          name: data.user?.name || "",
-          phone: data.user?.phone || "",
+          firstName: userProfile.firstName || "",
+          middleName: userProfile.middleName || "",
+          lastName: userProfile.lastName || "",
+          email: userProfile.email || "",
+          countryCode: fallbackCode,
+          phone: normalizedPhone,
         });
       } catch {
         toast.error("Failed to load profile.");
@@ -42,12 +66,25 @@ const Profile = () => {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+
+    const cleanedPhone = (form.phone || "").replace(/\D/g, "");
+    if (cleanedPhone.length < 6 || cleanedPhone.length > 15) {
+      toast.error("Please enter a valid mobile number.");
+      return;
+    }
+
     setSaving(true);
     try {
-      const { data } = await api.put("/auth/profile", {
-        name: form.name.trim(),
-        phone: form.phone.trim(),
-      });
+      const payload = {
+        firstName: form.firstName.trim(),
+        middleName: form.middleName.trim(),
+        lastName: form.lastName.trim(),
+        email: form.email.trim(),
+        countryCode: form.countryCode,
+        phone: cleanedPhone,
+      };
+
+      const { data } = await api.put("/auth/profile", payload);
 
       dispatch(
         setCredentials({
@@ -103,7 +140,7 @@ const Profile = () => {
           <div className="space-y-3 text-sm">
             <div className="rounded-xl bg-gray-50 border border-gray-100 px-3 py-2">
               <p className="text-xs text-gray-500">Name</p>
-              <p className="font-semibold text-gray-900 break-words">{user?.name || "-"}</p>
+              <p className="font-semibold text-gray-900 break-words">{[user?.firstName, user?.middleName, user?.lastName].filter(Boolean).join(" ") || user?.name || "-"}</p>
             </div>
             <div className="rounded-xl bg-gray-50 border border-gray-100 px-3 py-2">
               <p className="text-xs text-gray-500">Email</p>
@@ -124,27 +161,82 @@ const Profile = () => {
           <h3 className="text-lg font-semibold text-gray-900 mb-5">Edit Profile</h3>
 
           <form onSubmit={handleSubmit} className="space-y-5">
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
               <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1.5">Full Name</label>
+              <label className="block text-sm font-medium text-gray-700 mb-1.5">First Name</label>
                 <div className="flex items-center rounded-lg border border-gray-300 overflow-hidden focus-within:ring-2 focus-within:ring-blue-500 focus-within:border-transparent">
                   <div className="px-3 py-2.5 bg-gray-50 border-r border-gray-200 text-gray-500 flex items-center">
                     <User size={16} />
                   </div>
                   <input
                     type="text"
-                    name="name"
-                    value={form.name}
+                    name="firstName"
+                    value={form.firstName}
                     onChange={handleChange}
                     required
                     className="w-full px-3 py-2.5 text-sm text-gray-700 outline-none"
-                    placeholder="Your full name"
+                    placeholder="First name"
                   />
                 </div>
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1.5">Phone Number</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1.5">Middle Name</label>
+                <input
+                  type="text"
+                  name="middleName"
+                  value={form.middleName}
+                  onChange={handleChange}
+                  className="w-full px-3 py-2.5 text-sm text-gray-700 outline-none border border-gray-300 rounded-lg"
+                  placeholder="Middle name"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1.5">Last Name</label>
+                <input
+                  type="text"
+                  name="lastName"
+                  value={form.lastName}
+                  onChange={handleChange}
+                  required
+                  className="w-full px-3 py-2.5 text-sm text-gray-700 outline-none border border-gray-300 rounded-lg"
+                  placeholder="Last name"
+                />
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1.5">Email</label>
+              <div className="flex items-center rounded-lg border border-gray-300 overflow-hidden focus-within:ring-2 focus-within:ring-blue-500 focus-within:border-transparent">
+                <div className="px-3 py-2.5 bg-gray-50 border-r border-gray-200 text-gray-500 flex items-center">
+                  <Mail size={16} />
+                </div>
+                <input
+                  type="email"
+                  name="email"
+                  value={form.email}
+                  onChange={handleChange}
+                  required
+                  className="w-full px-3 py-2.5 text-sm text-gray-700 outline-none"
+                  placeholder="you@example.com"
+                />
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1.5">Mobile Number</label>
+              <div className="grid grid-cols-[130px_1fr] gap-2">
+                <select
+                  name="countryCode"
+                  value={form.countryCode}
+                  onChange={handleChange}
+                  className="input-field"
+                >
+                  {COUNTRY_CODES.map((code) => (
+                    <option key={code.value} value={code.value}>{code.label}</option>
+                  ))}
+                </select>
                 <div className="flex items-center rounded-lg border border-gray-300 overflow-hidden focus-within:ring-2 focus-within:ring-blue-500 focus-within:border-transparent">
                   <div className="px-3 py-2.5 bg-gray-50 border-r border-gray-200 text-gray-500 flex items-center">
                     <Phone size={16} />
@@ -154,22 +246,20 @@ const Profile = () => {
                     name="phone"
                     value={form.phone}
                     onChange={handleChange}
+                    required
                     className="w-full px-3 py-2.5 text-sm text-gray-700 outline-none"
-                    placeholder="+91 9876543210"
+                    placeholder="Mobile number"
                   />
                 </div>
               </div>
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1.5">Email (read-only)</label>
+              <label className="block text-sm font-medium text-gray-700 mb-1.5">Role (read-only)</label>
               <div className="flex items-center rounded-lg border border-gray-300 overflow-hidden bg-gray-50">
-                <div className="px-3 py-2.5 bg-gray-100 border-r border-gray-200 text-gray-500 flex items-center">
-                  <Mail size={16} />
-                </div>
                 <input
-                  type="email"
-                  value={user?.email || ""}
+                  type="text"
+                  value={user?.role || "User"}
                   disabled
                   className="w-full px-3 py-2.5 text-sm text-gray-500 bg-gray-50 cursor-not-allowed outline-none"
                 />

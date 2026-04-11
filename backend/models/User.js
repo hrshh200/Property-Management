@@ -3,10 +3,14 @@ const bcrypt = require("bcrypt");
 
 const userSchema = new mongoose.Schema(
   {
+    firstName: { type: String, trim: true },
+    middleName: { type: String, trim: true },
+    lastName: { type: String, trim: true },
     name: { type: String, required: true, trim: true },
     email: { type: String, required: true, unique: true, lowercase: true, trim: true },
     password: { type: String, required: true, minlength: 6 },
-    phone: { type: String, trim: true },
+    countryCode: { type: String, trim: true, default: "+91" },
+    phone: { type: String, trim: true, required: true },
     role: { type: String, enum: ["owner", "tenant"], required: true },
     isActive: { type: Boolean, default: true },
   },

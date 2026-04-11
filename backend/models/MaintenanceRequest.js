@@ -22,6 +22,8 @@ const maintenanceRequestSchema = new mongoose.Schema(
       enum: ["Open", "In Progress", "Resolved"],
       default: "Open",
     },
+    slaDueAt: { type: Date },
+    escalated: { type: Boolean, default: false },
     comments: [
       {
         text: { type: String, trim: true },

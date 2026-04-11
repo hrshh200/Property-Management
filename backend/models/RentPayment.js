@@ -7,6 +7,8 @@ const rentPaymentSchema = new mongoose.Schema(
     tenant: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
     owner: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
     amount: { type: Number, required: true, min: 0 },
+    lateFeeAmount: { type: Number, default: 0, min: 0 },
+    totalAmount: { type: Number, min: 0 },
     dueDate: { type: Date, required: true },
     paidDate: { type: Date },
     status: {
@@ -16,6 +18,7 @@ const rentPaymentSchema = new mongoose.Schema(
     },
     month: { type: String, required: true },
     year: { type: Number, required: true },
+    receiptNumber: { type: String, trim: true },
     notes: { type: String, trim: true },
   },
   { timestamps: true }

@@ -19,6 +19,14 @@ const moveOutRequestSchema = new mongoose.Schema(
     decidedAt: { type: Date },
     completedAt: { type: Date },
     completionNote: { type: String, trim: true },
+    settlement: {
+      unpaidRentAmount: { type: Number, default: 0 },
+      maintenanceDeduction: { type: Number, default: 0 },
+      otherDeduction: { type: Number, default: 0 },
+      refundableDeposit: { type: Number, default: 0 },
+      finalPayableToTenant: { type: Number, default: 0 },
+      note: { type: String, trim: true },
+    },
   },
   { timestamps: true }
 );

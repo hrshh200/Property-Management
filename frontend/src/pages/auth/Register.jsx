@@ -16,20 +16,55 @@ const PERKS = [
   { icon: CheckCircle2, text: "Free forever — no hidden fees" },
 ];
 
+const COUNTRY_CODES = [
+  { value: "+1", label: "US (+1)" },
+  { value: "+44", label: "UK (+44)" },
+  { value: "+61", label: "AU (+61)" },
+  { value: "+65", label: "SG (+65)" },
+  { value: "+91", label: "IN (+91)" },
+  { value: "+971", label: "AE (+971)" },
+];
+
 const Register = () => {
   const dispatch = useDispatch();
   const navigate = useNavigate();
-  const [form, setForm] = useState({ name: "", email: "", password: "", phone: "", role: "owner" });
+  const [form, setForm] = useState({
+    firstName: "",
+    middleName: "",
+    lastName: "",
+    email: "",
+    countryCode: "+91",
+    phone: "",
+    password: "",
+    confirmPassword: "",
+    role: "owner",
+  });
   const [loading, setLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
 
   const handleChange = (e) => setForm({ ...form, [e.target.name]: e.target.value });
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    if (form.password !== form.confirmPassword) {
+      toast.error("Password and confirm password must match.");
+      return;
+    }
+
+    const cleanedPhone = (form.phone || "").replace(/\D/g, "");
+    if (cleanedPhone.length < 6 || cleanedPhone.length > 15) {
+      toast.error("Please enter a valid mobile number.");
+      return;
+    }
+
     setLoading(true);
     try {
-      const { data } = await api.post("/auth/signup", form);
+      const payload = {
+        ...form,
+        phone: cleanedPhone,
+      };
+      const { data } = await api.post("/auth/signup", payload);
       dispatch(setCredentials({ user: data.user, token: data.token }));
       toast.success("Registration successful!");
       navigate(data.user.role === "owner" ? "/owner/dashboard" : "/tenant/dashboard");
@@ -139,17 +174,45 @@ const Register = () => {
           <form onSubmit={handleSubmit} className="space-y-4">
             <div className="grid grid-cols-2 gap-4">
               <div className="col-span-2 sm:col-span-1">
-                <label className="block text-sm font-semibold text-gray-700 mb-1.5">Full Name</label>
-                <input type="text" name="name" value={form.name} onChange={handleChange} required placeholder="John Doe" className="input-field" />
+                <label className="block text-sm font-semibold text-gray-700 mb-1.5">First Name</label>
+                <input type="text" name="firstName" value={form.firstName} onChange={handleChange} required placeholder="John" className="input-field" />
               </div>
               <div className="col-span-2 sm:col-span-1">
-                <label className="block text-sm font-semibold text-gray-700 mb-1.5">Phone</label>
-                <input type="tel" name="phone" value={form.phone} onChange={handleChange} placeholder="+91 9876543210" className="input-field" />
+                <label className="block text-sm font-semibold text-gray-700 mb-1.5">Middle Name</label>
+                <input type="text" name="middleName" value={form.middleName} onChange={handleChange} placeholder="A." className="input-field" />
+              </div>
+              <div className="col-span-2">
+                <label className="block text-sm font-semibold text-gray-700 mb-1.5">Last Name</label>
+                <input type="text" name="lastName" value={form.lastName} onChange={handleChange} required placeholder="Doe" className="input-field" />
               </div>
             </div>
             <div>
               <label className="block text-sm font-semibold text-gray-700 mb-1.5">Email address</label>
               <input type="email" name="email" value={form.email} onChange={handleChange} required placeholder="you@example.com" className="input-field" />
+            </div>
+            <div>
+              <label className="block text-sm font-semibold text-gray-700 mb-1.5">Mobile Number</label>
+              <div className="grid grid-cols-[130px_1fr] gap-2">
+                <select
+                  name="countryCode"
+                  value={form.countryCode}
+                  onChange={handleChange}
+                  className="input-field"
+                >
+                  {COUNTRY_CODES.map((code) => (
+                    <option key={code.value} value={code.value}>{code.label}</option>
+                  ))}
+                </select>
+                <input
+                  type="tel"
+                  name="phone"
+                  value={form.phone}
+                  onChange={handleChange}
+                  required
+                  placeholder="Mobile number"
+                  className="input-field"
+                />
+              </div>
             </div>
             <div>
               <label className="block text-sm font-semibold text-gray-700 mb-1.5">Password</label>
@@ -166,6 +229,24 @@ const Register = () => {
                 />
                 <button type="button" onClick={() => setShowPassword(!showPassword)} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600">
                   {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+                </button>
+              </div>
+            </div>
+            <div>
+              <label className="block text-sm font-semibold text-gray-700 mb-1.5">Confirm Password</label>
+              <div className="relative">
+                <input
+                  type={showConfirmPassword ? "text" : "password"}
+                  name="confirmPassword"
+                  value={form.confirmPassword}
+                  onChange={handleChange}
+                  required
+                  minLength={6}
+                  placeholder="Re-enter password"
+                  className="input-field pr-10"
+                />
+                <button type="button" onClick={() => setShowConfirmPassword(!showConfirmPassword)} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600">
+                  {showConfirmPassword ? <EyeOff size={18} /> : <Eye size={18} />}
                 </button>
               </div>
             </div>

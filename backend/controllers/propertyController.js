@@ -7,7 +7,45 @@ const RentPayment = require("../models/RentPayment");
 const MaintenanceRequest = require("../models/MaintenanceRequest");
 const MoveOutRequest = require("../models/MoveOutRequest");
 const ComplianceDocument = require("../models/ComplianceDocument");
+const LeaseRenewal = require("../models/LeaseRenewal");
+const Notification = require("../models/Notification");
+const PDFDocument = require("pdfkit");
 const { StatusCodes } = require("http-status-codes");
+
+const toObjectId = (id) => mongoose.Types.ObjectId.createFromHexString(id);
+
+const parseMoney = (value) => {
+  const num = Number(value);
+  if (!Number.isFinite(num) || num < 0) return 0;
+  return Number(num.toFixed(2));
+};
+
+const csvEscape = (value) => {
+  if (value === undefined || value === null) return "";
+  return `"${String(value).replace(/"/g, '""')}"`;
+};
+
+const createNotification = async ({ recipient, role, title, message, type = "system", actionPath, metadata }) => {
+  try {
+    await Notification.create({ recipient, role, title, message, type, actionPath, metadata });
+  } catch (_) {
+    // Non-blocking side effect
+  }
+};
+
+const calculateSlaDueAt = (urgency) => {
+  const now = new Date();
+  const hourMap = { Low: 72, Medium: 48, High: 24, Emergency: 8 };
+  const hours = hourMap[urgency] || 48;
+  return new Date(now.getTime() + hours * 60 * 60 * 1000);
+};
+
+const startOfDay = (value) => {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  date.setHours(0, 0, 0, 0);
+  return date;
+};
 
 // ─────────────────────────────────────────────
 //  AUTH
@@ -15,9 +53,37 @@ const { StatusCodes } = require("http-status-codes");
 
 const signUp = async (req, res) => {
   try {
-    const { name, email, password, phone, role } = req.body;
-    if (!name || !email || !password || !role) {
+    const {
+      firstName,
+      middleName,
+      lastName,
+      name,
+      email,
+      password,
+      confirmPassword,
+      countryCode,
+      phone,
+      role,
+    } = req.body;
+
+    const normalizedFirst = (firstName || "").trim();
+    const normalizedMiddle = (middleName || "").trim();
+    const normalizedLast = (lastName || "").trim();
+    const normalizedName = [normalizedFirst, normalizedMiddle, normalizedLast].filter(Boolean).join(" ") || (name || "").trim();
+    const normalizedCountryCode = ((countryCode || "+91") + "").trim();
+    const normalizedPhoneDigits = (phone || "").toString().replace(/\D/g, "");
+
+    if (!normalizedName || !email || !password || !role || !normalizedPhoneDigits) {
       return res.status(StatusCodes.BAD_REQUEST).json({ message: "All fields are required." });
+    }
+    if (!normalizedFirst || !normalizedLast) {
+      return res.status(StatusCodes.BAD_REQUEST).json({ message: "First name and last name are required." });
+    }
+    if (confirmPassword !== undefined && password !== confirmPassword) {
+      return res.status(StatusCodes.BAD_REQUEST).json({ message: "Password and confirm password must match." });
+    }
+    if (normalizedPhoneDigits.length < 6 || normalizedPhoneDigits.length > 15) {
+      return res.status(StatusCodes.BAD_REQUEST).json({ message: "Please enter a valid mobile number." });
     }
     if (!["owner", "tenant"].includes(role)) {
       return res.status(StatusCodes.BAD_REQUEST).json({ message: "Role must be owner or tenant." });
@@ -26,7 +92,17 @@ const signUp = async (req, res) => {
     if (existing) {
       return res.status(StatusCodes.CONFLICT).json({ message: "Email already registered." });
     }
-    const user = await User.create({ name, email, password, phone, role });
+    const user = await User.create({
+      firstName: normalizedFirst,
+      middleName: normalizedMiddle,
+      lastName: normalizedLast,
+      name: normalizedName,
+      email,
+      password,
+      countryCode: normalizedCountryCode,
+      phone: `${normalizedCountryCode}${normalizedPhoneDigits}`,
+      role,
+    });
     const token = jwt.sign(
       { userId: user._id, role: user.role, name: user.name, email: user.email },
       process.env.JWT_SECRET,
@@ -35,8 +111,45 @@ const signUp = async (req, res) => {
     res.status(StatusCodes.CREATED).json({
       message: "Registration successful.",
       token,
-      user: { _id: user._id, name: user.name, email: user.email, role: user.role, phone: user.phone },
+      user: {
+        _id: user._id,
+        firstName: user.firstName,
+        middleName: user.middleName,
+        lastName: user.lastName,
+        name: user.name,
+        email: user.email,
+        role: user.role,
+        countryCode: user.countryCode,
+        phone: user.phone,
+      },
     });
+  } catch (err) {
+    res.status(StatusCodes.INTERNAL_SERVER_ERROR).json({ message: err.message });
+  }
+};
+
+const forgotPassword = async (req, res) => {
+  try {
+    const { email, newPassword, confirmPassword } = req.body;
+    if (!email || !newPassword || !confirmPassword) {
+      return res.status(StatusCodes.BAD_REQUEST).json({ message: "Email, new password and confirm password are required." });
+    }
+    if (newPassword !== confirmPassword) {
+      return res.status(StatusCodes.BAD_REQUEST).json({ message: "Password and confirm password must match." });
+    }
+    if (newPassword.length < 6) {
+      return res.status(StatusCodes.BAD_REQUEST).json({ message: "Password must be at least 6 characters." });
+    }
+
+    const user = await User.findOne({ email: email.toLowerCase() });
+    if (!user) {
+      return res.status(StatusCodes.NOT_FOUND).json({ message: "No account found with this email." });
+    }
+
+    user.password = newPassword;
+    await user.save();
+
+    res.status(StatusCodes.OK).json({ message: "Password reset successful. Please login with your new password." });
   } catch (err) {
     res.status(StatusCodes.INTERNAL_SERVER_ERROR).json({ message: err.message });
   }
@@ -86,13 +199,65 @@ const getProfile = async (req, res) => {
 
 const updateProfile = async (req, res) => {
   try {
-    const { name, phone } = req.body;
-    const user = await User.findByIdAndUpdate(
-      req.user.userId,
-      { name, phone },
-      { new: true, runValidators: true }
-    ).select("-password");
-    res.status(StatusCodes.OK).json({ message: "Profile updated.", user });
+    const {
+      firstName,
+      middleName,
+      lastName,
+      name,
+      email,
+      countryCode,
+      phone,
+      password,
+      confirmPassword,
+    } = req.body;
+
+    const user = await User.findById(req.user.userId);
+    if (!user) return res.status(StatusCodes.NOT_FOUND).json({ message: "User not found." });
+
+    const normalizedFirst = (firstName || user.firstName || "").trim();
+    const normalizedMiddle = (middleName !== undefined ? middleName : user.middleName || "").trim();
+    const normalizedLast = (lastName || user.lastName || "").trim();
+    const normalizedName = [normalizedFirst, normalizedMiddle, normalizedLast].filter(Boolean).join(" ") || (name || user.name || "").trim();
+    const normalizedEmail = (email || user.email || "").toLowerCase().trim();
+    const normalizedCountryCode = ((countryCode || user.countryCode || "+91") + "").trim();
+    const normalizedPhoneDigits = (phone || user.phone || "").toString().replace(/\D/g, "");
+
+    if (!normalizedName || !normalizedEmail || !normalizedFirst || !normalizedLast || !normalizedPhoneDigits) {
+      return res.status(StatusCodes.BAD_REQUEST).json({ message: "First name, last name, email and phone are required." });
+    }
+
+    const existing = await User.findOne({ email: normalizedEmail, _id: { $ne: req.user.userId } });
+    if (existing) {
+      return res.status(StatusCodes.CONFLICT).json({ message: "Email already in use by another account." });
+    }
+
+    user.firstName = normalizedFirst;
+    user.middleName = normalizedMiddle;
+    user.lastName = normalizedLast;
+    user.name = normalizedName;
+    user.email = normalizedEmail;
+    user.countryCode = normalizedCountryCode;
+    user.phone = `${normalizedCountryCode}${normalizedPhoneDigits}`;
+
+    if (password || confirmPassword) {
+      if (!password || !confirmPassword) {
+        return res.status(StatusCodes.BAD_REQUEST).json({ message: "Both password and confirm password are required to update password." });
+      }
+      if (password !== confirmPassword) {
+        return res.status(StatusCodes.BAD_REQUEST).json({ message: "Password and confirm password must match." });
+      }
+      if (password.length < 6) {
+        return res.status(StatusCodes.BAD_REQUEST).json({ message: "Password must be at least 6 characters." });
+      }
+      user.password = password;
+    }
+
+    await user.save();
+
+    const safeUser = user.toObject();
+    delete safeUser.password;
+
+    res.status(StatusCodes.OK).json({ message: "Profile updated.", user: safeUser });
   } catch (err) {
     res.status(StatusCodes.INTERNAL_SERVER_ERROR).json({ message: err.message });
   }
@@ -185,7 +350,17 @@ const getTenantUsers = async (req, res) => {
 
 const assignTenant = async (req, res) => {
   try {
-    const { propertyId, tenantId, leaseStartDate, leaseEndDate, rentAmount, securityDeposit, rentDueDay } = req.body;
+    const {
+      propertyId,
+      tenantId,
+      leaseStartDate,
+      leaseEndDate,
+      rentAmount,
+      securityDeposit,
+      rentDueDay,
+      lateFeeType,
+      lateFeeValue,
+    } = req.body;
     if (!propertyId || !tenantId || !leaseStartDate || !leaseEndDate || !rentAmount) {
       return res.status(StatusCodes.BAD_REQUEST).json({ message: "All lease fields are required." });
     }
@@ -207,6 +382,8 @@ const assignTenant = async (req, res) => {
       rentAmount,
       securityDeposit: securityDeposit || 0,
       rentDueDay: rentDueDay || 1,
+      lateFeeType: ["fixed", "percent"].includes(lateFeeType) ? lateFeeType : "fixed",
+      lateFeeValue: Number(lateFeeValue || 0),
     });
 
     // Mark property as occupied
@@ -232,10 +409,26 @@ const getOwnerLeases = async (req, res) => {
 
 const updateLease = async (req, res) => {
   try {
-    const { leaseStartDate, leaseEndDate, rentAmount, securityDeposit, rentDueDay } = req.body;
+    const {
+      leaseStartDate,
+      leaseEndDate,
+      rentAmount,
+      securityDeposit,
+      rentDueDay,
+      lateFeeType,
+      lateFeeValue,
+    } = req.body;
     const lease = await Lease.findOneAndUpdate(
       { _id: req.params.id, owner: req.user.userId },
-      { leaseStartDate, leaseEndDate, rentAmount, securityDeposit, rentDueDay },
+      {
+        leaseStartDate,
+        leaseEndDate,
+        rentAmount,
+        securityDeposit,
+        rentDueDay,
+        lateFeeType: ["fixed", "percent"].includes(lateFeeType) ? lateFeeType : "fixed",
+        lateFeeValue: Number(lateFeeValue || 0),
+      },
       { new: true, runValidators: true }
     ).populate("property tenant");
     if (!lease) return res.status(StatusCodes.NOT_FOUND).json({ message: "Lease not found." });
@@ -285,6 +478,8 @@ const generateRentRecord = async (req, res) => {
       tenant: lease.tenant,
       owner: req.user.userId,
       amount: lease.rentAmount,
+      lateFeeAmount: 0,
+      totalAmount: lease.rentAmount,
       dueDate,
       month,
       year,
@@ -315,14 +510,37 @@ const getOwnerRentPayments = async (req, res) => {
 const markRentPaid = async (req, res) => {
   try {
     const { paidDate, notes } = req.body;
+
+    const rentRecord = await RentPayment.findOne({ _id: req.params.id, owner: req.user.userId });
+    if (!rentRecord) return res.status(StatusCodes.NOT_FOUND).json({ message: "Rent record not found." });
+
+    const receiptNumber = rentRecord.receiptNumber || `RCPT-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+    const totalAmount = Number((Number(rentRecord.amount || 0) + Number(rentRecord.lateFeeAmount || 0)).toFixed(2));
+
     const rent = await RentPayment.findOneAndUpdate(
       { _id: req.params.id, owner: req.user.userId },
-      { status: "Paid", paidDate: paidDate || new Date(), notes },
+      {
+        status: "Paid",
+        paidDate: paidDate || new Date(),
+        notes,
+        receiptNumber,
+        totalAmount,
+      },
       { new: true }
     )
       .populate("property", "propertyType address")
       .populate("tenant", "name email");
-    if (!rent) return res.status(StatusCodes.NOT_FOUND).json({ message: "Rent record not found." });
+
+    await createNotification({
+      recipient: rent.tenant?._id,
+      role: "tenant",
+      title: "Rent payment recorded",
+      message: `Your ${rent.month} ${rent.year} rent has been marked paid.`,
+      type: "rent",
+      actionPath: "/tenant/rent",
+      metadata: { rentId: rent._id, receiptNumber },
+    });
+
     res.status(StatusCodes.OK).json({ message: "Rent marked as paid.", rent });
   } catch (err) {
     res.status(StatusCodes.INTERNAL_SERVER_ERROR).json({ message: err.message });
@@ -331,11 +549,32 @@ const markRentPaid = async (req, res) => {
 
 const markRentOverdue = async (req, res) => {
   try {
-    const updated = await RentPayment.updateMany(
-      { owner: req.user.userId, status: "Pending", dueDate: { $lt: new Date() } },
-      { status: "Overdue" }
-    );
-    res.status(StatusCodes.OK).json({ message: `${updated.modifiedCount} rent record(s) marked overdue.` });
+    const records = await RentPayment.find({ owner: req.user.userId, status: "Pending", dueDate: { $lt: new Date() } }).populate("lease");
+    let modifiedCount = 0;
+
+    for (const record of records) {
+      const lateType = record.lease?.lateFeeType || "fixed";
+      const lateValue = Number(record.lease?.lateFeeValue || 0);
+      const lateFeeAmount = lateType === "percent" ? Number(((record.amount * lateValue) / 100).toFixed(2)) : lateValue;
+
+      record.status = "Overdue";
+      record.lateFeeAmount = lateFeeAmount;
+      record.totalAmount = Number((Number(record.amount || 0) + lateFeeAmount).toFixed(2));
+      await record.save();
+      modifiedCount += 1;
+
+      await createNotification({
+        recipient: record.tenant,
+        role: "tenant",
+        title: "Rent marked overdue",
+        message: `${record.month} ${record.year} rent is overdue. Late fee applied: $${Number(lateFeeAmount).toFixed(2)}.`,
+        type: "rent",
+        actionPath: "/tenant/rent",
+        metadata: { rentId: record._id },
+      });
+    }
+
+    res.status(StatusCodes.OK).json({ message: `${modifiedCount} rent record(s) marked overdue with late fee applied.` });
   } catch (err) {
     res.status(StatusCodes.INTERNAL_SERVER_ERROR).json({ message: err.message });
   }
@@ -378,10 +617,22 @@ const updatePropertyStatus = async (req, res) => {
 
 const getOwnerMaintenanceRequests = async (req, res) => {
   try {
-    const { status, propertyId } = req.query;
+    const { status, propertyId, escalated } = req.query;
+
+    await MaintenanceRequest.updateMany(
+      {
+        owner: req.user.userId,
+        status: { $in: ["Open", "In Progress"] },
+        slaDueAt: { $lt: new Date() },
+        escalated: false,
+      },
+      { escalated: true }
+    );
+
     const filter = { owner: req.user.userId };
     if (status) filter.status = status;
     if (propertyId) filter.property = propertyId;
+    if (escalated === "true") filter.escalated = true;
     const requests = await MaintenanceRequest.find(filter)
       .populate("property", "propertyType address")
       .populate("tenant", "name email phone")
@@ -400,6 +651,9 @@ const updateMaintenanceStatus = async (req, res) => {
       return res.status(StatusCodes.BAD_REQUEST).json({ message: "Invalid status." });
     }
     const update = { status };
+    if (status === "Resolved") {
+      update.escalated = false;
+    }
     if (comment) {
       update.$push = { comments: { text: comment, addedBy: req.user.userId } };
     }
@@ -412,6 +666,17 @@ const updateMaintenanceStatus = async (req, res) => {
       .populate("tenant", "name email")
       .populate("comments.addedBy", "name role");
     if (!request) return res.status(StatusCodes.NOT_FOUND).json({ message: "Request not found." });
+
+    await createNotification({
+      recipient: request.tenant?._id,
+      role: "tenant",
+      title: "Maintenance status updated",
+      message: `${request.category} request is now ${request.status}.`,
+      type: "maintenance",
+      actionPath: "/tenant/maintenance",
+      metadata: { requestId: request._id },
+    });
+
     res.status(StatusCodes.OK).json({ message: "Status updated.", request });
   } catch (err) {
     res.status(StatusCodes.INTERNAL_SERVER_ERROR).json({ message: err.message });
@@ -454,7 +719,7 @@ const getOwnerDashboard = async (req, res) => {
     ]);
 
     const paidRentAgg = await RentPayment.aggregate([
-      { $match: { owner: require("mongoose").Types.ObjectId.createFromHexString(ownerId), status: "Paid" } },
+      { $match: { owner: toObjectId(ownerId), status: "Paid" } },
       { $group: { _id: null, total: { $sum: "$amount" } } },
     ]);
     const totalPaidAmount = paidRentAgg[0]?.total || 0;
@@ -561,9 +826,22 @@ const createMaintenanceRequest = async (req, res) => {
       owner: lease.owner,
       category,
       urgency: requestUrgency,
+      slaDueAt: calculateSlaDueAt(requestUrgency),
+      escalated: false,
       description,
       photos,
     });
+
+    await createNotification({
+      recipient: lease.owner,
+      role: "owner",
+      title: "New maintenance request",
+      message: `${requestUrgency} priority ${category} issue raised by tenant.`,
+      type: "maintenance",
+      actionPath: "/owner/maintenance",
+      metadata: { requestId: request._id },
+    });
+
     res.status(StatusCodes.CREATED).json({ message: "Maintenance request created.", request });
   } catch (err) {
     res.status(StatusCodes.INTERNAL_SERVER_ERROR).json({ message: err.message });
@@ -746,6 +1024,16 @@ const decideMoveOutRequest = async (req, res) => {
       .populate("tenant", "name email phone")
       .populate("lease", "leaseStartDate leaseEndDate rentAmount");
 
+    await createNotification({
+      recipient: updatedRequest.tenant?._id,
+      role: "tenant",
+      title: "Move-out request reviewed",
+      message: `Your move-out request was ${updatedRequest.status.toLowerCase()}.`,
+      type: "moveout",
+      actionPath: "/tenant/dashboard",
+      metadata: { requestId: updatedRequest._id },
+    });
+
     res.status(StatusCodes.OK).json({ message: "Move-out request updated.", request: updatedRequest });
   } catch (err) {
     res.status(StatusCodes.INTERNAL_SERVER_ERROR).json({ message: err.message });
@@ -754,7 +1042,13 @@ const decideMoveOutRequest = async (req, res) => {
 
 const completeMoveOutRequest = async (req, res) => {
   try {
-    const { completionNote } = req.body;
+    const {
+      completionNote,
+      unpaidRentAmount,
+      maintenanceDeduction,
+      otherDeduction,
+      settlementNote,
+    } = req.body;
 
     const request = await MoveOutRequest.findOne({ _id: req.params.id, owner: req.user.userId });
     if (!request) {
@@ -790,6 +1084,8 @@ const completeMoveOutRequest = async (req, res) => {
       });
     }
 
+    const leaseDoc = await Lease.findById(request.lease).select("securityDeposit");
+
     await Lease.findOneAndUpdate(
       { _id: request.lease, owner: req.user.userId, isActive: true },
       { isActive: false }
@@ -800,18 +1096,42 @@ const completeMoveOutRequest = async (req, res) => {
       { status: "Vacant" }
     );
 
+    const unpaid = parseMoney(unpaidRentAmount || dueAmount);
+    const maintenance = parseMoney(maintenanceDeduction);
+    const other = parseMoney(otherDeduction);
+    const refundableDeposit = parseMoney(leaseDoc?.securityDeposit || 0);
+    const finalPayableToTenant = parseMoney(Math.max(0, refundableDeposit - unpaid - maintenance - other));
+
     const updatedRequest = await MoveOutRequest.findOneAndUpdate(
       { _id: req.params.id, owner: req.user.userId },
       {
         status: "Completed",
         completedAt: new Date(),
         completionNote: completionNote || "Move-out completed and property handed over.",
+        settlement: {
+          unpaidRentAmount: unpaid,
+          maintenanceDeduction: maintenance,
+          otherDeduction: other,
+          refundableDeposit,
+          finalPayableToTenant,
+          note: settlementNote || "",
+        },
       },
       { new: true }
     )
       .populate("property", "propertyType address")
       .populate("tenant", "name email phone")
       .populate("lease", "leaseStartDate leaseEndDate rentAmount");
+
+    await createNotification({
+      recipient: updatedRequest.tenant?._id,
+      role: "tenant",
+      title: "Move-out completed",
+      message: `Final settlement prepared. Payable amount: $${Number(finalPayableToTenant).toFixed(2)}.`,
+      type: "moveout",
+      actionPath: "/tenant/dashboard",
+      metadata: { requestId: updatedRequest._id, finalPayableToTenant },
+    });
 
     res.status(StatusCodes.OK).json({
       message: "Move-out completed. Lease closed and property marked vacant.",
@@ -872,6 +1192,7 @@ const getOwnerComplianceDocuments = async (req, res) => {
 
     const documents = await ComplianceDocument.find({ lease: { $in: leaseIds } })
       .populate("tenant", "name email")
+      .populate("verifiedBy", "name email")
       .populate("property", "propertyType address")
       .sort({ createdAt: -1 });
 
@@ -909,6 +1230,16 @@ const uploadTenantComplianceDocument = async (req, res) => {
       uploadedBy: req.user.userId,
     });
 
+    await createNotification({
+      recipient: lease.owner,
+      role: "owner",
+      title: "New compliance upload",
+      message: `Tenant uploaded ${documentType}.`,
+      type: "compliance",
+      actionPath: "/owner/tenants",
+      metadata: { documentId: doc._id },
+    });
+
     res.status(StatusCodes.CREATED).json({ message: "Document uploaded.", document: doc });
   } catch (err) {
     res.status(StatusCodes.INTERNAL_SERVER_ERROR).json({ message: err.message });
@@ -919,8 +1250,439 @@ const getTenantComplianceDocuments = async (req, res) => {
   try {
     const documents = await ComplianceDocument.find({ tenant: req.user.userId })
       .populate("property", "propertyType address")
+      .populate("verifiedBy", "name email")
       .sort({ createdAt: -1 });
     res.status(StatusCodes.OK).json({ documents });
+  } catch (err) {
+    res.status(StatusCodes.INTERNAL_SERVER_ERROR).json({ message: err.message });
+  }
+};
+
+const createLeaseRenewal = async (req, res) => {
+  try {
+    const { leaseId, proposedRentAmount, proposedLeaseStartDate, proposedLeaseEndDate, note } = req.body;
+    if (!leaseId || !proposedRentAmount || !proposedLeaseStartDate || !proposedLeaseEndDate) {
+      return res.status(StatusCodes.BAD_REQUEST).json({ message: "All renewal proposal fields are required." });
+    }
+
+    const lease = await Lease.findOne({ _id: leaseId, owner: req.user.userId, isActive: true });
+    if (!lease) return res.status(StatusCodes.NOT_FOUND).json({ message: "Active lease not found." });
+
+    const existingPending = await LeaseRenewal.findOne({ lease: leaseId, status: "Pending" });
+    if (existingPending) {
+      return res.status(StatusCodes.CONFLICT).json({ message: "A pending renewal proposal already exists." });
+    }
+
+    const currentLeaseEnd = startOfDay(lease.leaseEndDate);
+    const proposedStart = startOfDay(proposedLeaseStartDate);
+    const proposedEnd = startOfDay(proposedLeaseEndDate);
+    if (!proposedStart || !proposedEnd) {
+      return res.status(StatusCodes.BAD_REQUEST).json({ message: "Please provide valid renewal dates." });
+    }
+    if (proposedStart < currentLeaseEnd) {
+      return res.status(StatusCodes.BAD_REQUEST).json({
+        message: "Renewal start date must be on or after current lease end date.",
+      });
+    }
+    if (proposedEnd <= proposedStart) {
+      return res.status(StatusCodes.BAD_REQUEST).json({
+        message: "Renewal end date must be after renewal start date.",
+      });
+    }
+
+    const renewal = await LeaseRenewal.create({
+      lease: lease._id,
+      property: lease.property,
+      owner: lease.owner,
+      tenant: lease.tenant,
+      proposedRentAmount: parseMoney(proposedRentAmount),
+      proposedLeaseStartDate: proposedStart,
+      proposedLeaseEndDate: proposedEnd,
+      note,
+      status: "Pending",
+    });
+
+    await createNotification({
+      recipient: lease.tenant,
+      role: "tenant",
+      title: "Lease renewal proposal",
+      message: "Your owner has shared a renewal proposal.",
+      type: "renewal",
+      actionPath: "/tenant/dashboard",
+      metadata: { renewalId: renewal._id },
+    });
+
+    res.status(StatusCodes.CREATED).json({ message: "Renewal proposal created.", renewal });
+  } catch (err) {
+    res.status(StatusCodes.INTERNAL_SERVER_ERROR).json({ message: err.message });
+  }
+};
+
+const getOwnerLeaseRenewals = async (req, res) => {
+  try {
+    const { status } = req.query;
+    const filter = { owner: req.user.userId };
+    if (status) filter.status = status;
+
+    const renewals = await LeaseRenewal.find(filter)
+      .populate("property", "propertyType address")
+      .populate("tenant", "name email phone")
+      .populate("lease", "leaseStartDate leaseEndDate rentAmount")
+      .sort({ createdAt: -1 });
+
+    res.status(StatusCodes.OK).json({ renewals });
+  } catch (err) {
+    res.status(StatusCodes.INTERNAL_SERVER_ERROR).json({ message: err.message });
+  }
+};
+
+const cancelLeaseRenewal = async (req, res) => {
+  try {
+    const renewal = await LeaseRenewal.findOneAndUpdate(
+      { _id: req.params.id, owner: req.user.userId, status: "Pending" },
+      { status: "Cancelled", decidedAt: new Date() },
+      { new: true }
+    );
+    if (!renewal) return res.status(StatusCodes.NOT_FOUND).json({ message: "Pending renewal not found." });
+
+    await createNotification({
+      recipient: renewal.tenant,
+      role: "tenant",
+      title: "Renewal proposal cancelled",
+      message: "Your owner cancelled the pending renewal proposal.",
+      type: "renewal",
+      actionPath: "/tenant/dashboard",
+      metadata: { renewalId: renewal._id },
+    });
+
+    res.status(StatusCodes.OK).json({ message: "Renewal proposal cancelled.", renewal });
+  } catch (err) {
+    res.status(StatusCodes.INTERNAL_SERVER_ERROR).json({ message: err.message });
+  }
+};
+
+const getTenantLeaseRenewals = async (req, res) => {
+  try {
+    const { status } = req.query;
+    const filter = { tenant: req.user.userId };
+    if (status) filter.status = status;
+
+    const renewals = await LeaseRenewal.find(filter)
+      .populate("property", "propertyType address")
+      .populate("owner", "name email phone")
+      .populate("lease", "leaseStartDate leaseEndDate rentAmount")
+      .sort({ createdAt: -1 });
+
+    res.status(StatusCodes.OK).json({ renewals });
+  } catch (err) {
+    res.status(StatusCodes.INTERNAL_SERVER_ERROR).json({ message: err.message });
+  }
+};
+
+const decideLeaseRenewal = async (req, res) => {
+  try {
+    const { status, decisionNote } = req.body;
+    if (!["Accepted", "Rejected"].includes(status)) {
+      return res.status(StatusCodes.BAD_REQUEST).json({ message: "Status must be Accepted or Rejected." });
+    }
+
+    const renewal = await LeaseRenewal.findOne({ _id: req.params.id, tenant: req.user.userId, status: "Pending" });
+    if (!renewal) return res.status(StatusCodes.NOT_FOUND).json({ message: "Pending renewal not found." });
+
+    renewal.status = status;
+    renewal.decisionNote = decisionNote || "";
+    renewal.decidedAt = new Date();
+    await renewal.save();
+
+    if (status === "Accepted") {
+      await Lease.findOneAndUpdate(
+        { _id: renewal.lease, isActive: true },
+        {
+          leaseStartDate: renewal.proposedLeaseStartDate,
+          leaseEndDate: renewal.proposedLeaseEndDate,
+          rentAmount: renewal.proposedRentAmount,
+        }
+      );
+    }
+
+    await createNotification({
+      recipient: renewal.owner,
+      role: "owner",
+      title: "Renewal decision received",
+      message: `Tenant ${status.toLowerCase()} your renewal proposal.`,
+      type: "renewal",
+      actionPath: "/owner/tenants",
+      metadata: { renewalId: renewal._id, status },
+    });
+
+    res.status(StatusCodes.OK).json({ message: `Renewal ${status.toLowerCase()}.`, renewal });
+  } catch (err) {
+    res.status(StatusCodes.INTERNAL_SERVER_ERROR).json({ message: err.message });
+  }
+};
+
+const downloadRentReceipt = async (req, res) => {
+  try {
+    const rent = await RentPayment.findOne({ _id: req.params.id, status: "Paid" })
+      .populate("property", "propertyType address")
+      .populate("tenant", "name email phone")
+      .populate("owner", "name email phone");
+
+    if (!rent) return res.status(StatusCodes.NOT_FOUND).json({ message: "Paid rent record not found." });
+
+    const requesterRole = req.user.role;
+    const requesterId = String(req.user.userId);
+    const allowed =
+      (requesterRole === "owner" && String(rent.owner?._id) === requesterId) ||
+      (requesterRole === "tenant" && String(rent.tenant?._id) === requesterId);
+    if (!allowed) {
+      return res.status(StatusCodes.FORBIDDEN).json({ message: "Not authorized to access this receipt." });
+    }
+
+    const filename = `${rent.receiptNumber || `receipt-${rent._id}`}.pdf`;
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+
+    const doc = new PDFDocument({ margin: 50 });
+    doc.pipe(res);
+
+    doc.fontSize(20).text("Rent Payment Receipt", { align: "center" });
+    doc.moveDown();
+    doc.fontSize(11);
+    doc.text(`Receipt No: ${rent.receiptNumber || "N/A"}`);
+    doc.text(`Month/Year: ${rent.month} ${rent.year}`);
+    doc.text(`Paid Date: ${rent.paidDate ? new Date(rent.paidDate).toLocaleDateString() : "N/A"}`);
+    doc.moveDown();
+    doc.text(`Tenant: ${rent.tenant?.name || "-"}`);
+    doc.text(`Owner: ${rent.owner?.name || "-"}`);
+    doc.text(`Property: ${rent.property?.propertyType || "-"}`);
+    doc.text(
+      `Address: ${rent.property?.address?.street || ""}, ${rent.property?.address?.city || ""}, ${rent.property?.address?.state || ""}`
+    );
+    doc.moveDown();
+    doc.text(`Base Rent: $${Number(rent.amount || 0).toFixed(2)}`);
+    doc.text(`Late Fee: $${Number(rent.lateFeeAmount || 0).toFixed(2)}`);
+    doc.font("Helvetica-Bold").text(`Total Paid: $${Number(rent.totalAmount || rent.amount || 0).toFixed(2)}`);
+    doc.font("Helvetica");
+
+    if (rent.notes) {
+      doc.moveDown();
+      doc.text(`Notes: ${rent.notes}`);
+    }
+
+    doc.end();
+  } catch (err) {
+    res.status(StatusCodes.INTERNAL_SERVER_ERROR).json({ message: err.message });
+  }
+};
+
+const exportOwnerRentCsv = async (req, res) => {
+  try {
+    const rents = await RentPayment.find({ owner: req.user.userId })
+      .populate("tenant", "name email")
+      .populate("property", "propertyType address")
+      .sort({ createdAt: -1 });
+
+    const header = [
+      "Receipt Number",
+      "Month",
+      "Year",
+      "Tenant",
+      "Tenant Email",
+      "Property",
+      "City",
+      "Status",
+      "Amount",
+      "Late Fee",
+      "Total",
+      "Due Date",
+      "Paid Date",
+    ];
+    const rows = rents.map((r) => [
+      r.receiptNumber || "",
+      r.month,
+      r.year,
+      r.tenant?.name || "",
+      r.tenant?.email || "",
+      r.property?.propertyType || "",
+      r.property?.address?.city || "",
+      r.status,
+      Number(r.amount || 0).toFixed(2),
+      Number(r.lateFeeAmount || 0).toFixed(2),
+      Number(r.totalAmount || r.amount || 0).toFixed(2),
+      r.dueDate ? new Date(r.dueDate).toISOString().slice(0, 10) : "",
+      r.paidDate ? new Date(r.paidDate).toISOString().slice(0, 10) : "",
+    ]);
+
+    const csv = [header, ...rows].map((row) => row.map(csvEscape).join(",")).join("\n");
+    res.setHeader("Content-Type", "text/csv");
+    res.setHeader("Content-Disposition", `attachment; filename="rent-report-${Date.now()}.csv"`);
+    res.status(StatusCodes.OK).send(csv);
+  } catch (err) {
+    res.status(StatusCodes.INTERNAL_SERVER_ERROR).json({ message: err.message });
+  }
+};
+
+const verifyComplianceDocument = async (req, res) => {
+  try {
+    const { verificationStatus, verificationNote } = req.body;
+    if (!["Verified", "Rejected"].includes(verificationStatus)) {
+      return res.status(StatusCodes.BAD_REQUEST).json({ message: "verificationStatus must be Verified or Rejected." });
+    }
+
+    const doc = await ComplianceDocument.findById(req.params.id);
+    if (!doc) return res.status(StatusCodes.NOT_FOUND).json({ message: "Document not found." });
+
+    const lease = await Lease.findOne({ _id: doc.lease, owner: req.user.userId });
+    if (!lease) return res.status(StatusCodes.FORBIDDEN).json({ message: "Not authorized to verify this document." });
+
+    doc.verificationStatus = verificationStatus;
+    doc.verificationNote = verificationNote || "";
+    doc.verifiedBy = req.user.userId;
+    doc.verifiedAt = new Date();
+    await doc.save();
+
+    await createNotification({
+      recipient: doc.tenant,
+      role: "tenant",
+      title: "Compliance document reviewed",
+      message: `${doc.documentType} has been ${verificationStatus.toLowerCase()}.`,
+      type: "compliance",
+      actionPath: "/tenant/dashboard",
+      metadata: { documentId: doc._id, verificationStatus },
+    });
+
+    res.status(StatusCodes.OK).json({ message: "Document verification updated.", document: doc });
+  } catch (err) {
+    res.status(StatusCodes.INTERNAL_SERVER_ERROR).json({ message: err.message });
+  }
+};
+
+const getNotifications = async (req, res) => {
+  try {
+    const { unreadOnly } = req.query;
+    const filter = { recipient: req.user.userId, role: req.user.role };
+    if (unreadOnly === "true") filter.isRead = false;
+
+    const notifications = await Notification.find(filter).sort({ createdAt: -1 }).limit(100);
+    res.status(StatusCodes.OK).json({ notifications });
+  } catch (err) {
+    res.status(StatusCodes.INTERNAL_SERVER_ERROR).json({ message: err.message });
+  }
+};
+
+const markNotificationRead = async (req, res) => {
+  try {
+    const notification = await Notification.findOneAndUpdate(
+      { _id: req.params.id, recipient: req.user.userId, role: req.user.role },
+      { isRead: true },
+      { new: true }
+    );
+    if (!notification) return res.status(StatusCodes.NOT_FOUND).json({ message: "Notification not found." });
+    res.status(StatusCodes.OK).json({ message: "Notification marked as read.", notification });
+  } catch (err) {
+    res.status(StatusCodes.INTERNAL_SERVER_ERROR).json({ message: err.message });
+  }
+};
+
+const getOwnerAnalytics = async (req, res) => {
+  try {
+    const ownerObjectId = toObjectId(req.user.userId);
+
+    const [rentStatusAgg, maintenanceAgg, monthlyRentAgg] = await Promise.all([
+      RentPayment.aggregate([
+        { $match: { owner: ownerObjectId } },
+        { $group: { _id: "$status", total: { $sum: "$totalAmount" }, count: { $sum: 1 } } },
+      ]),
+      MaintenanceRequest.aggregate([
+        { $match: { owner: ownerObjectId } },
+        { $group: { _id: "$status", count: { $sum: 1 } } },
+      ]),
+      RentPayment.aggregate([
+        { $match: { owner: ownerObjectId, status: "Paid" } },
+        {
+          $group: {
+            _id: { year: "$year", month: "$month" },
+            collection: { $sum: "$totalAmount" },
+          },
+        },
+        { $sort: { "_id.year": 1 } },
+      ]),
+    ]);
+
+    const rentSummary = {
+      paid: 0,
+      pending: 0,
+      overdue: 0,
+      paidCount: 0,
+      pendingCount: 0,
+      overdueCount: 0,
+    };
+
+    for (const row of rentStatusAgg) {
+      if (row._id === "Paid") {
+        rentSummary.paid = row.total || 0;
+        rentSummary.paidCount = row.count || 0;
+      }
+      if (row._id === "Pending") {
+        rentSummary.pending = row.total || 0;
+        rentSummary.pendingCount = row.count || 0;
+      }
+      if (row._id === "Overdue") {
+        rentSummary.overdue = row.total || 0;
+        rentSummary.overdueCount = row.count || 0;
+      }
+    }
+
+    const maintenanceSummary = { Open: 0, "In Progress": 0, Resolved: 0 };
+    for (const row of maintenanceAgg) {
+      maintenanceSummary[row._id] = row.count;
+    }
+
+    res.status(StatusCodes.OK).json({
+      analytics: {
+        rentSummary,
+        maintenanceSummary,
+        monthlyCollection: monthlyRentAgg.map((row) => ({
+          year: row._id.year,
+          month: row._id.month,
+          collection: row.collection,
+        })),
+      },
+    });
+  } catch (err) {
+    res.status(StatusCodes.INTERNAL_SERVER_ERROR).json({ message: err.message });
+  }
+};
+
+const exportOwnerAnalyticsCsv = async (req, res) => {
+  try {
+    const ownerObjectId = toObjectId(req.user.userId);
+    const monthlyRentAgg = await RentPayment.aggregate([
+      { $match: { owner: ownerObjectId } },
+      {
+        $group: {
+          _id: { year: "$year", month: "$month", status: "$status" },
+          total: { $sum: "$totalAmount" },
+          count: { $sum: 1 },
+        },
+      },
+      { $sort: { "_id.year": 1 } },
+    ]);
+
+    const header = ["Year", "Month", "Status", "Count", "Total Amount"];
+    const rows = monthlyRentAgg.map((row) => [
+      row._id.year,
+      row._id.month,
+      row._id.status,
+      row.count,
+      Number(row.total || 0).toFixed(2),
+    ]);
+
+    const csv = [header, ...rows].map((row) => row.map(csvEscape).join(",")).join("\n");
+    res.setHeader("Content-Type", "text/csv");
+    res.setHeader("Content-Disposition", `attachment; filename="analytics-${Date.now()}.csv"`);
+    res.status(StatusCodes.OK).send(csv);
   } catch (err) {
     res.status(StatusCodes.INTERNAL_SERVER_ERROR).json({ message: err.message });
   }
@@ -930,6 +1692,7 @@ module.exports = {
   // Auth
   signUp,
   signIn,
+  forgotPassword,
   getProfile,
   updateProfile,
   // Owner – Property
@@ -949,6 +1712,8 @@ module.exports = {
   getOwnerRentPayments,
   markRentPaid,
   markRentOverdue,
+  downloadRentReceipt,
+  exportOwnerRentCsv,
   // Owner – Vacancy
   getVacantProperties,
   updatePropertyStatus,
@@ -958,6 +1723,8 @@ module.exports = {
   addCommentToRequest,
   // Owner – Dashboard
   getOwnerDashboard,
+  getOwnerAnalytics,
+  exportOwnerAnalyticsCsv,
   // Tenant
   getTenantDashboard,
   getTenantLease,
@@ -969,8 +1736,16 @@ module.exports = {
   getOwnerMoveOutRequests,
   decideMoveOutRequest,
   completeMoveOutRequest,
+  createLeaseRenewal,
+  getOwnerLeaseRenewals,
+  cancelLeaseRenewal,
+  getTenantLeaseRenewals,
+  decideLeaseRenewal,
   uploadOwnerComplianceDocument,
   getOwnerComplianceDocuments,
+  verifyComplianceDocument,
   uploadTenantComplianceDocument,
   getTenantComplianceDocuments,
+  getNotifications,
+  markNotificationRead,
 };

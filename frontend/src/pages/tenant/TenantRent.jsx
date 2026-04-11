@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { DollarSign, Search, CalendarDays, MapPin, ReceiptText } from "lucide-react";
+import { DollarSign, Search, CalendarDays, MapPin, ReceiptText, Download } from "lucide-react";
 import { PageHeader, StatusBadge, EmptyState } from "../../components/UI";
 import api from "../../utils/api";
 import { formatCurrency } from "../../utils/currency";
@@ -47,6 +47,23 @@ const TenantRent = () => {
       .toLowerCase();
     return haystack.includes(normalizedSearch);
   });
+
+  const downloadReceipt = async (rentId) => {
+    try {
+      const response = await api.get(`/rent/${rentId}/receipt`, { responseType: "blob" });
+      const blob = new Blob([response.data], { type: "application/pdf" });
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `receipt-${rentId}.pdf`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+    } catch {
+      toast.error("Unable to download receipt.");
+    }
+  };
 
   return (
     <div className="space-y-6">
@@ -114,6 +131,7 @@ const TenantRent = () => {
                 <th className="px-4 py-3 font-medium text-gray-600">Due Date</th>
                 <th className="px-4 py-3 font-medium text-gray-600">Paid Date</th>
                 <th className="px-4 py-3 font-medium text-gray-600">Status</th>
+                <th className="px-4 py-3 font-medium text-gray-600">Receipt</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-50">
@@ -142,6 +160,19 @@ const TenantRent = () => {
                     ) : "-"}
                   </td>
                   <td className="px-4 py-3"><StatusBadge status={r.status} /></td>
+                  <td className="px-4 py-3">
+                    {r.status === "Paid" ? (
+                      <button
+                        type="button"
+                        onClick={() => downloadReceipt(r._id)}
+                        className="inline-flex items-center gap-1 rounded-md border border-blue-200 bg-blue-50 px-2 py-1 text-[11px] font-semibold text-blue-700 hover:bg-blue-100"
+                      >
+                        <Download size={12} /> Receipt
+                      </button>
+                    ) : (
+                      <span className="text-xs text-gray-400">Not available</span>
+                    )}
+                  </td>
                 </tr>
               ))}
             </tbody>

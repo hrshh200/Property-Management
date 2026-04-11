@@ -16,6 +16,14 @@ const complianceDocumentSchema = new mongoose.Schema(
     filePath: { type: String, required: true, trim: true },
     uploadedByRole: { type: String, enum: ["owner", "tenant"], required: true },
     uploadedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
+    verificationStatus: {
+      type: String,
+      enum: ["Pending", "Verified", "Rejected"],
+      default: "Pending",
+    },
+    verificationNote: { type: String, trim: true },
+    verifiedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
+    verifiedAt: { type: Date },
   },
   { timestamps: true }
 );

@@ -9,6 +9,7 @@ import {
   Clock3,
   ReceiptText,
   CalendarDays,
+  Download,
 } from "lucide-react";
 import { PageHeader, Modal, StatusBadge, EmptyState } from "../../components/UI";
 import api from "../../utils/api";
@@ -89,6 +90,40 @@ const RentManagement = () => {
     }
   };
 
+  const downloadReceipt = async (rentId) => {
+    try {
+      const response = await api.get(`/rent/${rentId}/receipt`, { responseType: "blob" });
+      const blob = new Blob([response.data], { type: "application/pdf" });
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `receipt-${rentId}.pdf`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+    } catch {
+      toast.error("Unable to download receipt.");
+    }
+  };
+
+  const exportRentCsv = async () => {
+    try {
+      const response = await api.get("/owner/rent/export", { responseType: "blob" });
+      const blob = new Blob([response.data], { type: "text/csv;charset=utf-8;" });
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `owner-rent-${Date.now()}.csv`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+    } catch {
+      toast.error("Unable to export rent data.");
+    }
+  };
+
   const paidCount = rents.filter((r) => r.status === "Paid").length;
   const pendingCount = rents.filter((r) => r.status === "Pending").length;
   const overdueCount = rents.filter((r) => r.status === "Overdue").length;
@@ -124,6 +159,9 @@ const RentManagement = () => {
         subtitle="Track, generate and reconcile rent with confidence"
         action={
           <div className="flex gap-2">
+            <button onClick={exportRentCsv} className="btn-secondary flex items-center gap-1.5 text-sm">
+              <Download size={15} /> Export CSV
+            </button>
             <button onClick={markOverdue} className="btn-secondary flex items-center gap-1.5 text-sm">
               <AlertCircle size={15} /> Mark Overdue
             </button>
@@ -256,10 +294,19 @@ const RentManagement = () => {
                       </button>
                     )}
                     {r.status === "Paid" && r.paidDate && (
-                      <span className="inline-flex items-center gap-1 text-xs text-gray-500">
-                        <ReceiptText size={13} />
-                        Paid {new Date(r.paidDate).toLocaleDateString()}
-                      </span>
+                      <div className="flex flex-col gap-1">
+                        <span className="inline-flex items-center gap-1 text-xs text-gray-500">
+                          <ReceiptText size={13} />
+                          Paid {new Date(r.paidDate).toLocaleDateString()}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => downloadReceipt(r._id)}
+                          className="inline-flex w-fit items-center gap-1 rounded-md border border-blue-200 bg-blue-50 px-2 py-1 text-[11px] font-semibold text-blue-700 hover:bg-blue-100"
+                        >
+                          <Download size={12} /> Receipt
+                        </button>
+                      </div>
                     )}
                   </td>
                 </tr>

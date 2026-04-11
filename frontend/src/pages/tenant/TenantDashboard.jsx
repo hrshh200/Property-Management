@@ -25,6 +25,13 @@ import api from "../../utils/api";
 import { formatCurrency } from "../../utils/currency";
 import toast from "react-hot-toast";
 
+const toDateLabel = (value) => {
+  if (!value) return "-";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "-";
+  return date.toLocaleDateString();
+};
+
 const TenantDashboard = () => {
   const DOC_TYPES = ["Rent Agreement", "Aadhaar Card", "PAN Card", "Police Verification", "Other"];
   const API_BASE = (import.meta.env.VITE_API_URL || "http://localhost:5000/api").replace(/\/api\/?$/, "");
@@ -37,6 +44,8 @@ const TenantDashboard = () => {
   const [submittingMoveOut, setSubmittingMoveOut] = useState(false);
   const [moveOutForm, setMoveOutForm] = useState({ requestedMoveOutDate: "", reason: "" });
   const [complianceDocs, setComplianceDocs] = useState([]);
+  const [renewals, setRenewals] = useState([]);
+  const [docsModal, setDocsModal] = useState(false);
   const [uploadingDoc, setUploadingDoc] = useState(false);
   const [docForm, setDocForm] = useState({
     documentType: "Aadhaar Card",
@@ -49,12 +58,13 @@ const TenantDashboard = () => {
   useEffect(() => {
     const fetch = async () => {
       try {
-        const [{ data: res }, { data: rentRes }, { data: maintenanceRes }, { data: moveOutRes }, { data: docsRes }] = await Promise.all([
+        const [{ data: res }, { data: rentRes }, { data: maintenanceRes }, { data: moveOutRes }, { data: docsRes }, { data: renewalRes }] = await Promise.all([
           api.get("/tenant/dashboard"),
           api.get("/tenant/rent-history"),
           api.get("/tenant/maintenance"),
           api.get("/tenant/move-out"),
           api.get("/tenant/compliance-documents"),
+          api.get("/tenant/renewals"),
         ]);
 
         setData(res);
@@ -67,6 +77,7 @@ const TenantDashboard = () => {
 
         setMoveOutRequests(moveOutHistory);
         setComplianceDocs(docs);
+        setRenewals(renewalRes?.renewals || []);
 
         const now = new Date();
         const within7Days = new Date();
@@ -169,7 +180,54 @@ const TenantDashboard = () => {
   const overdueRent = Number(stats?.overdueRent || 0);
   const openRequests = Number(stats?.openRequests || 0);
   const payableRent = pendingRent + overdueRent;
-
+  const sortedRenewals = [...renewals].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+  const renewalByPropertyId = sortedRenewals.reduce((acc, renewal) => {
+    const propertyId = renewal.property?._id;
+    if (!propertyId || acc[propertyId]) return acc;
+    acc[propertyId] = renewal;
+    return acc;
+  }, {});
+  const propertyTimelineTiles = Object.values(renewalByPropertyId);
+  const leaseDurations = (() => {
+    const durations = [];
+    if (lease) {
+      durations.push({
+        id: `active-${lease._id}`,
+        label: "Current Term",
+        rentAmount: lease.rentAmount,
+        startDate: lease.leaseStartDate,
+        endDate: lease.leaseEndDate,
+        status: "Active",
+      });
+    }
+    const samePropertyRenewals = sortedRenewals.filter((renewal) => {
+      if (!lease?.property?._id || !renewal.property?._id) return false;
+      return renewal.property._id === lease.property._id;
+    });
+    samePropertyRenewals.forEach((renewal) => {
+      durations.push({
+        id: renewal._id,
+        renewalId: renewal._id,
+        label: "Renewal Term",
+        rentAmount: renewal.proposedRentAmount,
+        startDate: renewal.proposedLeaseStartDate,
+        endDate: renewal.proposedLeaseEndDate,
+        status: renewal.status,
+        note: renewal.note || "",
+      });
+    });
+    const seen = new Set();
+    return durations.filter((duration) => {
+      const key = `${duration.startDate || ""}|${duration.endDate || ""}|${Number(duration.rentAmount || 0)}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  })();
+  const propertyRenewalsForLease = sortedRenewals.filter((renewal) => {
+    if (!lease?.property?._id || !renewal.property?._id) return false;
+    return renewal.property._id === lease.property._id;
+  });
   const handleMoveOutRequest = async (e) => {
     e.preventDefault();
     setSubmittingMoveOut(true);
@@ -212,6 +270,7 @@ const TenantDashboard = () => {
         notes: "",
         document: null,
       });
+      setDocsModal(false);
       const { data: docsRes } = await api.get("/tenant/compliance-documents");
       setComplianceDocs(docsRes.documents || []);
     } catch (err) {
@@ -221,22 +280,22 @@ const TenantDashboard = () => {
     }
   };
 
+  const respondRenewal = async (renewalId, status) => {
+    try {
+      await api.patch(`/tenant/renewals/${renewalId}/decision`, { status });
+      toast.success(`Renewal ${status.toLowerCase()}.`);
+      const { data: renewalRes } = await api.get("/tenant/renewals");
+      setRenewals(renewalRes?.renewals || []);
+    } catch (err) {
+      toast.error(err.response?.data?.message || "Unable to submit renewal decision.");
+    }
+  };
+
   return (
     <div className="space-y-6">
       <PageHeader
         title="My Dashboard"
         subtitle="Overview of your tenancy details"
-        action={
-          <button
-            type="button"
-            onClick={() => setMoveOutModal(true)}
-            disabled={!lease || !!pendingMoveOut}
-            className="btn-primary flex items-center gap-2 disabled:opacity-60 disabled:cursor-not-allowed"
-          >
-            <DoorOpen size={16} />
-            {pendingMoveOut ? "Move-Out Pending" : "Request Move-Out"}
-          </button>
-        }
       />
 
       <section className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-slate-900 via-blue-900 to-indigo-900 px-6 py-7 sm:px-8 shadow-xl">
@@ -332,77 +391,8 @@ const TenantDashboard = () => {
         )}
       </section>
 
-      <section className="rounded-2xl border border-gray-100 bg-white p-5 shadow-sm">
-        <div className="mb-4 flex items-center justify-between gap-3">
-          <h3 className="text-base font-semibold text-gray-900 inline-flex items-center gap-2">
-            <ClipboardCheck size={18} className="text-indigo-600" /> Move-Out Workflow
-          </h3>
-          {latestMoveOut ? <StatusBadge status={latestMoveOut.status} /> : null}
-        </div>
-
-        {!latestMoveOut ? (
-          <p className="text-sm text-gray-600">
-            If you plan to vacate the property, submit a move-out request. Your owner can approve with final last staying day and closing formalities.
-          </p>
-        ) : (
-          <div className="space-y-3">
-            <div className="rounded-xl border border-gray-100 bg-gray-50 p-4">
-              <p className="text-xs uppercase tracking-wider font-semibold text-gray-500">Latest Request</p>
-              <div className="mt-2 grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
-                <div>
-                  <p className="text-gray-500">Requested Move-Out Date</p>
-                  <p className="font-semibold text-gray-900">{new Date(latestMoveOut.requestedMoveOutDate).toLocaleDateString()}</p>
-                </div>
-                <div>
-                  <p className="text-gray-500">Requested On</p>
-                  <p className="font-semibold text-gray-900">{new Date(latestMoveOut.createdAt).toLocaleDateString()}</p>
-                </div>
-              </div>
-
-              {latestMoveOut.reason ? (
-                <div className="mt-3">
-                  <p className="text-gray-500 text-xs uppercase tracking-wider font-semibold">Reason</p>
-                  <p className="text-sm text-gray-700 mt-1">{latestMoveOut.reason}</p>
-                </div>
-              ) : null}
-
-              {latestMoveOut.status === "Approved" ? (
-                <div className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 p-3">
-                  <p className="text-xs uppercase tracking-wider font-semibold text-emerald-700">Owner Approved</p>
-                  <p className="mt-1 text-sm text-emerald-800">
-                    Last staying day: {latestMoveOut.approvedLastStayingDate ? new Date(latestMoveOut.approvedLastStayingDate).toLocaleDateString() : "Not shared"}
-                  </p>
-                  <p className="mt-2 text-sm text-emerald-800">
-                    Closing formalities: {latestMoveOut.closingFormalities || "Not provided"}
-                  </p>
-                </div>
-              ) : null}
-
-              {latestMoveOut.status === "Rejected" ? (
-                <div className="mt-3 rounded-lg border border-red-200 bg-red-50 p-3">
-                  <p className="text-xs uppercase tracking-wider font-semibold text-red-700">Owner Response</p>
-                  <p className="mt-1 text-sm text-red-800">{latestMoveOut.ownerNote || "Your owner has rejected this request."}</p>
-                </div>
-              ) : null}
-
-              {latestMoveOut.status === "Completed" ? (
-                <div className="mt-3 rounded-lg border border-blue-200 bg-blue-50 p-3">
-                  <p className="text-xs uppercase tracking-wider font-semibold text-blue-700">Move-Out Completed</p>
-                  <p className="mt-1 text-sm text-blue-800">
-                    Completed on: {latestMoveOut.completedAt ? new Date(latestMoveOut.completedAt).toLocaleDateString() : "Not available"}
-                  </p>
-                  <p className="mt-2 text-sm text-blue-800">
-                    Final note: {latestMoveOut.completionNote || "Move-out process has been closed by owner."}
-                  </p>
-                </div>
-              ) : null}
-            </div>
-          </div>
-        )}
-      </section>
-
       {lease ? (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           {/* Property Info */}
           <div className="rounded-2xl border border-gray-100 bg-white p-5 shadow-sm">
             <div className="flex items-center gap-2 mb-4">
@@ -428,6 +418,73 @@ const TenantDashboard = () => {
                 <span className="text-gray-500">Rooms</span>
                 <span className="font-medium text-gray-900">{lease.property?.numberOfRooms}</span>
               </div>
+              <div className="rounded-lg border border-emerald-100 bg-emerald-50 p-3 text-xs text-emerald-800 space-y-2">
+                <div className="flex items-center justify-between gap-2">
+                  <p className="font-semibold uppercase tracking-wider">Lease Journey Timeline</p>
+                  <span className="text-[10px] font-semibold uppercase tracking-wider text-emerald-700">{leaseDurations.length} terms</span>
+                </div>
+                {leaseDurations.map((duration) => (
+                  <div key={duration.id} className={`rounded-md border px-2.5 py-2 ${duration.status === "Pending" ? "border-amber-300 bg-amber-50" : "border-emerald-200 bg-white"}`}>
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="font-semibold text-emerald-900">{duration.label}</p>
+                      <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${
+                        duration.status === "Active" ? "bg-emerald-100 text-emerald-700" :
+                        duration.status === "Pending" ? "bg-amber-100 text-amber-700" :
+                        duration.status === "Accepted" ? "bg-blue-100 text-blue-700" :
+                        "bg-gray-100 text-gray-600"
+                      }`}>{duration.status}</span>
+                    </div>
+                    <p className="mt-1">{formatCurrency(duration.rentAmount || 0)} | {toDateLabel(duration.startDate)} &rarr; {toDateLabel(duration.endDate)}</p>
+                    {duration.note ? <p className="mt-1 text-[11px] text-amber-800">Owner note: {duration.note}</p> : null}
+                    {duration.status === "Pending" && duration.renewalId ? (
+                      <div className="mt-2.5 flex gap-2">
+                        <button
+                          type="button"
+                          onClick={() => respondRenewal(duration.renewalId, "Accepted")}
+                          className="rounded-md border border-emerald-300 bg-emerald-600 px-3 py-1.5 text-[11px] font-semibold text-white hover:bg-emerald-700"
+                        >
+                          Accept Renewal
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => respondRenewal(duration.renewalId, "Rejected")}
+                          className="rounded-md border border-red-200 bg-white px-3 py-1.5 text-[11px] font-semibold text-red-600 hover:bg-red-50"
+                        >
+                          Reject
+                        </button>
+                      </div>
+                    ) : null}
+                  </div>
+                ))}
+                {leaseDurations.length === 0 ? <p>No lease timeline available yet.</p> : null}
+              </div>
+
+              <div className="rounded-lg border border-indigo-100 bg-indigo-50 p-3 text-xs text-indigo-800 space-y-2">
+                <div className="flex items-center justify-between gap-2">
+                  <p className="font-semibold uppercase tracking-wider">Move-In / Move-Out</p>
+                  {latestMoveOut ? <StatusBadge status={latestMoveOut.status} /> : null}
+                </div>
+                <p>Move In: {toDateLabel(lease.leaseStartDate || lease.createdAt)}</p>
+                <p>
+                  Move Out: {latestMoveOut ? toDateLabel(latestMoveOut.completedAt || latestMoveOut.approvedLastStayingDate || latestMoveOut.requestedMoveOutDate) : "Not requested"}
+                </p>
+                {latestMoveOut?.status === "Approved" && latestMoveOut?.closingFormalities ? (
+                  <p>Closing formalities: {latestMoveOut.closingFormalities}</p>
+                ) : null}
+                {latestMoveOut?.status === "Rejected" && latestMoveOut?.ownerNote ? (
+                  <p>Owner note: {latestMoveOut.ownerNote}</p>
+                ) : null}
+                <button
+                  type="button"
+                  onClick={() => setMoveOutModal(true)}
+                  disabled={!!pendingMoveOut}
+                  className="mt-1 rounded-md border border-indigo-200 bg-white px-3 py-1.5 text-[11px] font-semibold text-indigo-700 hover:bg-indigo-100 disabled:opacity-60 disabled:cursor-not-allowed inline-flex items-center gap-1"
+                >
+                  <DoorOpen size={12} /> {pendingMoveOut ? "Move-Out Pending" : "Request Move-Out"}
+                </button>
+              </div>
+
+
               {lease.property?.description && (
                 <div className="pt-1">
                   <span className="text-gray-500">Description</span>
@@ -438,62 +495,18 @@ const TenantDashboard = () => {
               <div className="pt-4 mt-2 border-t border-gray-100 space-y-3">
                 <div className="flex items-center justify-between gap-3">
                   <h4 className="text-sm font-semibold text-gray-900 inline-flex items-center gap-1.5">
-                    <ShieldCheck size={15} className="text-emerald-600" /> Upload Documents
+                    <ShieldCheck size={15} className="text-emerald-600" /> Compliance Documents
                   </h4>
                   <span className="text-[11px] font-semibold uppercase tracking-wider text-gray-500">{complianceDocs.length} uploaded</span>
                 </div>
 
-                <form onSubmit={uploadComplianceDoc} className="space-y-3 rounded-xl border border-gray-100 bg-gray-50 p-3">
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    <div>
-                      <label className="block text-xs font-medium text-gray-700 mb-1">Document Type</label>
-                      <select
-                        value={docForm.documentType}
-                        onChange={(e) => setDocForm({ ...docForm, documentType: e.target.value })}
-                        className="input-field"
-                      >
-                        {DOC_TYPES.map((type) => <option key={type}>{type}</option>)}
-                      </select>
-                    </div>
-                    <div>
-                      <label className="block text-xs font-medium text-gray-700 mb-1">Document Number</label>
-                      <input
-                        value={docForm.documentNumber}
-                        onChange={(e) => setDocForm({ ...docForm, documentNumber: e.target.value })}
-                        className="input-field"
-                        placeholder="Agreement / Aadhaar no"
-                      />
-                    </div>
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-medium text-gray-700 mb-1">Document File</label>
-                    <input
-                      type="file"
-                      accept="application/pdf,image/png,image/jpeg,image/webp"
-                      onChange={(e) => setDocForm({ ...docForm, document: e.target.files?.[0] || null })}
-                      className="input-field"
-                    />
-                    <p className="mt-1 text-[11px] text-gray-500">Allowed: PDF, JPG, PNG, WEBP (max 10MB)</p>
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-medium text-gray-700 mb-1">Notes</label>
-                    <textarea
-                      rows={2}
-                      value={docForm.notes}
-                      onChange={(e) => setDocForm({ ...docForm, notes: e.target.value })}
-                      className="input-field"
-                      placeholder="Optional context for owner review"
-                    />
-                  </div>
-
-                  <div className="flex justify-end">
-                    <button type="submit" disabled={uploadingDoc} className="btn-primary inline-flex items-center gap-1.5 text-sm">
-                      <Upload size={14} /> {uploadingDoc ? "Uploading..." : "Upload Document"}
-                    </button>
-                  </div>
-                </form>
+                <button
+                  type="button"
+                  onClick={() => setDocsModal(true)}
+                  className="btn-primary inline-flex items-center gap-1.5 text-sm w-full justify-center"
+                >
+                  <Upload size={14} /> Upload Document
+                </button>
 
                 {complianceDocs.length === 0 ? (
                   <p className="text-xs text-gray-500">No compliance documents uploaded yet.</p>
@@ -541,11 +554,11 @@ const TenantDashboard = () => {
               </div>
               <div className="flex justify-between gap-3">
                 <span className="text-gray-500">Lease Start</span>
-                <span className="font-medium text-gray-900">{new Date(lease.leaseStartDate).toLocaleDateString()}</span>
+                <span className="font-medium text-gray-900">{toDateLabel(lease.leaseStartDate)}</span>
               </div>
               <div className="flex justify-between gap-3">
                 <span className="text-gray-500">Lease End</span>
-                <span className="font-medium text-gray-900">{new Date(lease.leaseEndDate).toLocaleDateString()}</span>
+                <span className="font-medium text-gray-900">{toDateLabel(lease.leaseEndDate)}</span>
               </div>
               <div className="flex justify-between pt-2 border-t border-gray-100">
                 <span className="text-gray-500">Owner</span>
@@ -565,6 +578,140 @@ const TenantDashboard = () => {
           <p className="text-gray-400 text-sm mt-1">Contact your property owner to be assigned a lease.</p>
         </div>
       )}
+
+      <Modal isOpen={docsModal} onClose={() => setDocsModal(false)} title="Upload Compliance Document">
+        <form onSubmit={uploadComplianceDoc} className="space-y-5">
+          {/* Header Info */}
+          <div className="rounded-xl bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-100 p-4">
+            <div className="flex gap-3">
+              <div className="p-2.5 bg-blue-100 rounded-lg h-fit">
+                <FileText size={18} className="text-blue-600" />
+              </div>
+              <div>
+                <h3 className="font-semibold text-gray-900 text-sm">Submit Important Documents</h3>
+                <p className="text-xs text-gray-600 mt-1">Upload your compliance documents for owner verification and records.</p>
+              </div>
+            </div>
+          </div>
+
+          {/* Main form fields */}
+          <div className="space-y-5">
+            {/* Document Type Section */}
+            <div>
+              <label className="block text-sm font-semibold text-gray-800 mb-2 inline-flex items-center gap-1.5">
+                <ShieldCheck size={15} className="text-emerald-600" />
+                Document Type *
+              </label>
+              <select
+                value={docForm.documentType}
+                onChange={(e) => setDocForm({ ...docForm, documentType: e.target.value })}
+                className="input-field w-full font-medium"
+              >
+                {DOC_TYPES.map((type) => <option key={type}>{type}</option>)}
+              </select>
+            </div>
+
+            {/* Document Number Section */}
+            <div>
+              <label className="block text-sm font-semibold text-gray-800 mb-2 inline-flex items-center gap-1.5">
+                <FileText size={15} className="text-blue-600" />
+                Document Number *
+              </label>
+              <input
+                value={docForm.documentNumber}
+                onChange={(e) => setDocForm({ ...docForm, documentNumber: e.target.value })}
+                className="input-field w-full"
+                placeholder="e.g., XXXXXXXX1234 or Agreement#2025"
+                required
+              />
+              <p className="text-xs text-gray-500 mt-1">Enter your Aadhaar, PAN, or Agreement number for reference</p>
+            </div>
+
+            {/* File Upload Section */}
+            <div>
+              <label className="block text-sm font-semibold text-gray-800 mb-3 inline-flex items-center gap-1.5">
+                <Upload size={15} className="text-cyan-600" />
+                Upload Document *
+              </label>
+              <label className="cursor-pointer block">
+                <div className="relative border-2 border-dashed border-gray-300 rounded-xl p-6 hover:border-blue-400 hover:bg-blue-50 transition-all bg-gray-50">
+                  <input
+                    type="file"
+                    accept="application/pdf,image/png,image/jpeg,image/webp"
+                    onChange={(e) => setDocForm({ ...docForm, document: e.target.files?.[0] || null })}
+                    className="absolute inset-0 opacity-0 cursor-pointer"
+                    required
+                  />
+                  <div className="flex flex-col items-center justify-center text-center">
+                    <div className="p-3 bg-blue-100 rounded-lg mb-2">
+                      <Upload size={24} className="text-blue-600" />
+                    </div>
+                    <p className="text-sm font-semibold text-gray-800">
+                      {docForm.document ? docForm.document.name : "Click to upload or drag & drop"}
+                    </p>
+                    <p className="text-xs text-gray-500 mt-1">
+                      {docForm.document
+                        ? `Size: ${(docForm.document.size / 1024 / 1024).toFixed(2)}MB`
+                        : "PDF, JPG, PNG, or WEBP • Max 10MB"}
+                    </p>
+                  </div>
+                </div>
+              </label>
+            </div>
+
+            {/* Notes Section */}
+            <div>
+              <label className="block text-sm font-semibold text-gray-800 mb-2 inline-flex items-center gap-1.5">
+                <ClipboardCheck size={15} className="text-purple-600" />
+                Notes or Comments
+              </label>
+              <textarea
+                rows={3}
+                value={docForm.notes}
+                onChange={(e) => setDocForm({ ...docForm, notes: e.target.value })}
+                className="input-field w-full resize-none"
+                placeholder="Add any special context, expiry dates, or notes for owner review (optional)"
+              />
+            </div>
+
+            {/* Info Box */}
+            <div className="rounded-lg border border-amber-100 bg-amber-50 px-3.5 py-3 flex gap-2.5">
+              <AlertTriangle size={16} className="text-amber-600 mt-0.5 flex-shrink-0" />
+              <p className="text-xs text-amber-800">
+                <span className="font-semibold">Tip:</span> Upload clear, legible documents for faster verification. Owner will review and confirm receipt.
+              </p>
+            </div>
+          </div>
+
+          {/* Action Buttons */}
+          <div className="flex gap-2 justify-end pt-3 border-t border-gray-100">
+            <button
+              type="button"
+              onClick={() => setDocsModal(false)}
+              className="px-4 py-2.5 rounded-lg border border-gray-200 text-sm font-medium text-gray-700 hover:bg-gray-50 transition-all"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={uploadingDoc || !docForm.document}
+              className="px-5 py-2.5 rounded-lg bg-gradient-to-r from-blue-600 to-blue-700 text-white text-sm font-semibold hover:from-blue-700 hover:to-blue-800 disabled:opacity-50 disabled:cursor-not-allowed transition-all inline-flex items-center gap-2 shadow-sm hover:shadow-md"
+            >
+              {uploadingDoc ? (
+                <>
+                  <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                  Uploading...
+                </>
+              ) : (
+                <>
+                  <Upload size={16} />
+                  Upload Document
+                </>
+              )}
+            </button>
+          </div>
+        </form>
+      </Modal>
 
       <Modal isOpen={moveOutModal} onClose={() => setMoveOutModal(false)} title="Request Move-Out">
         {!lease ? (
@@ -608,3 +755,6 @@ const TenantDashboard = () => {
 };
 
 export default TenantDashboard;
+
+
+
