@@ -2,6 +2,8 @@ const express = require("express");
 const path = require("path");
 require("dotenv").config({ path: path.join(__dirname, ".env") });
 const cors = require("cors");
+const swaggerUi = require("swagger-ui-express");
+const swaggerSpec = require("./config/swagger");
 const connectDB = require("./config/config");
 const propertyRoutes = require("./routes/propertyRoutes");
 
@@ -45,6 +47,11 @@ app.use(cors({
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use("/uploads", express.static(path.join(__dirname, "uploads")));
+
+app.use("/api-docs", swaggerUi.serve, swaggerUi.setup(swaggerSpec, {
+  customSiteTitle: "Property Management API Docs",
+  swaggerOptions: { persistAuthorization: true },
+}));
 
 app.use("/api", propertyRoutes);
 
