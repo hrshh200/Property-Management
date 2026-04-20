@@ -1,17 +1,17 @@
 const express = require("express");
 const router = express.Router();
 const { verifyToken, requireOwner, requireTenant } = require("../middleware/authMiddleware");
-const { uploadMaintenancePhotos, uploadComplianceDocument } = require("../middleware/uploadMiddleware");
+const { uploadMaintenancePhotos, uploadComplianceDocument, uploadPaymentQrCode } = require("../middleware/uploadMiddleware");
 const {
   signUp, signIn, forgotPassword, getProfile, updateProfile,
   addProperty, getOwnerProperties, getPropertyById, updateProperty, deleteProperty,
   getPublicProperties, createPropertyInquiry, getOwnerInquiries, updateOwnerInquiryStatus,
   getTenantUsers, assignTenant, getOwnerLeases, updateLease, terminateLease,
-  generateRentRecord, getOwnerRentPayments, markRentPaid, markRentOverdue,
+  generateRentRecord, getOwnerRentPayments, updateRentPaymentInstructions, markRentPaid, markRentOverdue,
   getVacantProperties, updatePropertyStatus,
   getOwnerMaintenanceRequests, updateMaintenanceStatus, addCommentToRequest,
   getOwnerDashboard, getOwnerAnalytics, exportOwnerAnalyticsCsv,
-  getTenantDashboard, getTenantLease, getTenantRentHistory, getTenantInquiries,
+  getTenantDashboard, getTenantLease, getTenantRentHistory, submitTenantRentPayment, getTenantOwnerPaymentDetails, getTenantInquiries,
   createMaintenanceRequest, getTenantMaintenanceRequests,
   createMoveOutRequest, getTenantMoveOutRequests,
   getOwnerMoveOutRequests, decideMoveOutRequest, completeMoveOutRequest,
@@ -22,6 +22,10 @@ const {
   verifyComplianceDocument,
   uploadTenantComplianceDocument, getTenantComplianceDocuments,
   getNotifications, markNotificationRead,
+  getOwnerPaymentDetails,
+  updateOwnerPaymentDetails,
+  deleteOwnerPaymentDetails,
+  uploadOwnerPaymentQrCode,
 } = require("../controllers/propertyController");
 
 // ── Auth ──────────────────────────────────────
@@ -63,10 +67,23 @@ router.patch("/owner/leases/:id/terminate", verifyToken, requireOwner, terminate
 // ── Owner – Rent ──────────────────────────────
 router.post("/owner/rent", verifyToken, requireOwner, generateRentRecord);
 router.get("/owner/rent", verifyToken, requireOwner, getOwnerRentPayments);
+router.patch("/owner/rent/:id/payment-instructions", verifyToken, requireOwner, updateRentPaymentInstructions);
 router.patch("/owner/rent/:id/paid", verifyToken, requireOwner, markRentPaid);
 router.post("/owner/rent/mark-overdue", verifyToken, requireOwner, markRentOverdue);
 router.get("/owner/rent/export", verifyToken, requireOwner, exportOwnerRentCsv);
 router.get("/rent/:id/receipt", verifyToken, downloadRentReceipt);
+
+// ── Owner – Payment Details ────────────────────
+router.get("/owner/payment-details", verifyToken, requireOwner, getOwnerPaymentDetails);
+router.put("/owner/payment-details", verifyToken, requireOwner, updateOwnerPaymentDetails);
+router.delete("/owner/payment-details", verifyToken, requireOwner, deleteOwnerPaymentDetails);
+router.post(
+  "/owner/payment-details/qr-upload",
+  verifyToken,
+  requireOwner,
+  uploadPaymentQrCode.single("qrCode"),
+  uploadOwnerPaymentQrCode
+);
 
 // ── Owner – Renewals ─────────────────────────
 router.get("/owner/renewals", verifyToken, requireOwner, getOwnerLeaseRenewals);
@@ -100,6 +117,8 @@ router.get("/tenant/dashboard", verifyToken, requireTenant, getTenantDashboard);
 // ── Tenant – Lease & Rent ─────────────────────
 router.get("/tenant/lease", verifyToken, requireTenant, getTenantLease);
 router.get("/tenant/rent-history", verifyToken, requireTenant, getTenantRentHistory);
+router.post("/tenant/rent/:id/submit-payment", verifyToken, requireTenant, submitTenantRentPayment);
+router.get("/tenant/owner-payment-details", verifyToken, requireTenant, getTenantOwnerPaymentDetails);
 router.get("/tenant/inquiries", verifyToken, requireTenant, getTenantInquiries);
 router.get("/tenant/renewals", verifyToken, requireTenant, getTenantLeaseRenewals);
 router.patch("/tenant/renewals/:id/decision", verifyToken, requireTenant, decideLeaseRenewal);

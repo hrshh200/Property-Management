@@ -62,6 +62,13 @@ const RentManagement = () => {
       await api.post("/owner/rent", form);
       toast.success("Rent record created.");
       setAddModal(false);
+      setForm({
+        leaseId: "",
+        month: MONTHS[new Date().getMonth()],
+        year: String(currentYear),
+        dueDate: "",
+        notes: "",
+      });
       fetchData();
     } catch (err) {
       toast.error(err.response?.data?.message || "Failed to create rent record.");
@@ -288,26 +295,35 @@ const RentManagement = () => {
                   </td>
                   <td className="px-4 py-3"><StatusBadge status={r.status} /></td>
                   <td className="px-4 py-3">
-                    {r.status !== "Paid" && (
-                      <button onClick={() => markPaid(r._id)} className="inline-flex items-center gap-1.5 rounded-lg border border-green-200 bg-green-50 px-2.5 py-1 text-green-700 hover:bg-green-100 text-xs font-semibold transition-colors">
-                        <CheckCircle size={14} /> Mark Paid
-                      </button>
-                    )}
-                    {r.status === "Paid" && r.paidDate && (
-                      <div className="flex flex-col gap-1">
-                        <span className="inline-flex items-center gap-1 text-xs text-gray-500">
-                          <ReceiptText size={13} />
-                          Paid {new Date(r.paidDate).toLocaleDateString()}
-                        </span>
-                        <button
-                          type="button"
-                          onClick={() => downloadReceipt(r._id)}
-                          className="inline-flex w-fit items-center gap-1 rounded-md border border-blue-200 bg-blue-50 px-2 py-1 text-[11px] font-semibold text-blue-700 hover:bg-blue-100"
-                        >
-                          <Download size={12} /> Receipt
+                    <div className="flex flex-col gap-1.5">
+                      {r.status !== "Paid" && (
+                        <button onClick={() => markPaid(r._id)} className="inline-flex w-fit items-center gap-1.5 rounded-lg border border-green-200 bg-green-50 px-2.5 py-1 text-green-700 hover:bg-green-100 text-xs font-semibold transition-colors">
+                          <CheckCircle size={14} /> Mark Paid
                         </button>
-                      </div>
-                    )}
+                      )}
+
+                      {r.paymentSubmission?.status === "Submitted" && (
+                        <span className="inline-flex w-fit items-center rounded-md border border-amber-200 bg-amber-50 px-2 py-1 text-[11px] font-semibold text-amber-700">
+                          Txn: {r.paymentSubmission?.transactionId || "-"}
+                        </span>
+                      )}
+
+                      {r.status === "Paid" && r.paidDate && (
+                        <div className="flex flex-col gap-1">
+                          <span className="inline-flex items-center gap-1 text-xs text-gray-500">
+                            <ReceiptText size={13} />
+                            Paid {new Date(r.paidDate).toLocaleDateString()}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => downloadReceipt(r._id)}
+                            className="inline-flex w-fit items-center gap-1 rounded-md border border-blue-200 bg-blue-50 px-2 py-1 text-[11px] font-semibold text-blue-700 hover:bg-blue-100"
+                          >
+                            <Download size={12} /> Receipt
+                          </button>
+                        </div>
+                      )}
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -352,6 +368,7 @@ const RentManagement = () => {
             <label className="block text-sm font-medium text-gray-700 mb-1">Notes (optional)</label>
             <input type="text" value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} className="input-field" placeholder="Any notes..." />
           </div>
+
           <div className="flex justify-end gap-3 pt-2">
             <button type="button" onClick={() => setAddModal(false)} className="btn-secondary">Cancel</button>
             <button type="submit" disabled={saving} className="btn-primary">{saving ? "Generating..." : "Generate"}</button>

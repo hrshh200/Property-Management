@@ -63,7 +63,38 @@ const uploadComplianceDocument = multer({
   },
 });
 
+const paymentDir = path.join(__dirname, "..", "uploads", "payment");
+fs.mkdirSync(paymentDir, { recursive: true });
+
+const paymentStorage = multer.diskStorage({
+  destination: (_, __, cb) => {
+    cb(null, paymentDir);
+  },
+  filename: (_, file, cb) => {
+    const ext = path.extname(file.originalname || "").toLowerCase();
+    cb(null, `payment-qr-${Date.now()}-${Math.round(Math.random() * 1e9)}${ext}`);
+  },
+});
+
+const paymentFilter = (_, file, cb) => {
+  if (file.mimetype && file.mimetype.startsWith("image/")) {
+    cb(null, true);
+  } else {
+    cb(new Error("Only image files are allowed."));
+  }
+};
+
+const uploadPaymentQrCode = multer({
+  storage: paymentStorage,
+  fileFilter: paymentFilter,
+  limits: {
+    fileSize: 3 * 1024 * 1024,
+    files: 1,
+  },
+});
+
 module.exports = {
   uploadMaintenancePhotos,
   uploadComplianceDocument,
+  uploadPaymentQrCode,
 };

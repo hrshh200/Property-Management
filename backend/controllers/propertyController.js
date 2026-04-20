@@ -1,5 +1,6 @@
 const jwt = require("jsonwebtoken");
 const mongoose = require("mongoose");
+const path = require("path");
 const User = require("../models/User");
 const Property = require("../models/Property");
 const Lease = require("../models/Lease");
@@ -59,6 +60,204 @@ const startOfDay = (value) => {
   return date;
 };
 
+const sanitizePaymentInstructions = (input = {}) => {
+  const value = input && typeof input === "object" ? input : {};
+  return {
+    accountHolderName: (value.accountHolderName || "").trim(),
+    bankName: (value.bankName || "").trim(),
+    accountNumber: (value.accountNumber || "").trim(),
+    ifscCode: (value.ifscCode || "").trim().toUpperCase(),
+    upiId: (value.upiId || "").trim(),
+    qrCodeImageUrl: (value.qrCodeImageUrl || "").trim(),
+  };
+};
+
+const hasPaymentInstructions = (instructions = {}) => {
+  return Boolean(
+    instructions.accountHolderName ||
+      instructions.bankName ||
+      instructions.accountNumber ||
+      instructions.ifscCode ||
+      instructions.upiId ||
+      instructions.qrCodeImageUrl
+  );
+};
+
+const validateOwnerPaymentDetails = (details = {}) => {
+  const {
+    accountHolderName = "",
+    bankName = "",
+    accountType = "",
+    accountNumber = "",
+    ifscCode = "",
+    upiId = "",
+    qrCodeImageUrl = "",
+  } = details;
+
+  const hasAny = Boolean(accountHolderName || bankName || accountType || accountNumber || ifscCode || upiId || qrCodeImageUrl);
+  if (!hasAny) {
+    return { valid: false, message: "Please add at least one payment method (bank account, UPI ID, or QR code URL)." };
+  }
+
+  const hasAnyBankField = Boolean(accountHolderName || bankName || accountType || accountNumber || ifscCode);
+  const hasAllBankFields = Boolean(accountHolderName && bankName && accountType && accountNumber && ifscCode);
+  if (hasAnyBankField && !hasAllBankFields) {
+    return {
+      valid: false,
+      message: "For bank transfer, account holder name, bank name, account type, account number, and IFSC code are all required.",
+    };
+  }
+
+  if (accountType && !["Savings", "Current"].includes(accountType)) {
+    return { valid: false, message: "Account type must be Savings or Current." };
+  }
+
+  if (accountNumber && !/^\d{8,20}$/.test(accountNumber)) {
+    return { valid: false, message: "Account number must be 8 to 20 digits." };
+  }
+
+  if (ifscCode && !/^[A-Z]{4}0[A-Z0-9]{6}$/.test(ifscCode)) {
+    return { valid: false, message: "Please enter a valid IFSC code." };
+  }
+
+  if (upiId && !/^[A-Za-z0-9._-]{2,}@[A-Za-z]{2,}$/.test(upiId)) {
+    return { valid: false, message: "Please enter a valid UPI ID." };
+  }
+
+  if (qrCodeImageUrl) {
+    const isLocalUploadPath = qrCodeImageUrl.startsWith("/uploads/");
+    if (!isLocalUploadPath) {
+      try {
+        const parsed = new URL(qrCodeImageUrl);
+        if (!/^https?:$/.test(parsed.protocol)) {
+          return { valid: false, message: "QR code URL must start with http:// or https://." };
+        }
+      } catch {
+        return { valid: false, message: "Please enter a valid QR code image URL." };
+      }
+    }
+  }
+
+  return { valid: true };
+};
+
+// ─────────────────────────────────────────────
+//  OWNER – PAYMENT DETAILS (bank/UPI/QR)
+// ─────────────────────────────────────────────
+
+const getOwnerPaymentDetails = async (req, res) => {
+  try {
+    const user = await User.findById(req.user.userId).select("paymentDetails");
+    if (!user) return res.status(StatusCodes.NOT_FOUND).json({ message: "User not found." });
+    res.status(StatusCodes.OK).json({ paymentDetails: user.paymentDetails || {} });
+  } catch (err) {
+    res.status(StatusCodes.INTERNAL_SERVER_ERROR).json({ message: err.message });
+  }
+};
+
+const updateOwnerPaymentDetails = async (req, res) => {
+  try {
+    const { accountHolderName, bankName, accountType, accountNumber, ifscCode, upiId, qrCodeImageUrl } = req.body;
+    const paymentDetails = {
+      accountHolderName: (accountHolderName || "").trim(),
+      bankName: (bankName || "").trim(),
+      accountType: ["Savings", "Current"].includes(accountType) ? accountType : "",
+      accountNumber: (accountNumber || "").trim(),
+      ifscCode: (ifscCode || "").trim().toUpperCase(),
+      upiId: (upiId || "").trim(),
+      qrCodeImageUrl: (qrCodeImageUrl || "").trim(),
+    };
+
+    const validation = validateOwnerPaymentDetails(paymentDetails);
+    if (!validation.valid) {
+      return res.status(StatusCodes.BAD_REQUEST).json({ message: validation.message });
+    }
+
+    const user = await User.findByIdAndUpdate(
+      req.user.userId,
+      { paymentDetails },
+      { new: true }
+    ).select("paymentDetails");
+    if (!user) return res.status(StatusCodes.NOT_FOUND).json({ message: "User not found." });
+    res.status(StatusCodes.OK).json({ message: "Payment details saved.", paymentDetails: user.paymentDetails });
+  } catch (err) {
+    res.status(StatusCodes.INTERNAL_SERVER_ERROR).json({ message: err.message });
+  }
+};
+
+const deleteOwnerPaymentDetails = async (req, res) => {
+  try {
+    const clearedPaymentDetails = {
+      accountHolderName: "",
+      bankName: "",
+      accountType: "",
+      accountNumber: "",
+      ifscCode: "",
+      upiId: "",
+      qrCodeImageUrl: "",
+    };
+
+    const user = await User.findByIdAndUpdate(
+      req.user.userId,
+      { paymentDetails: clearedPaymentDetails },
+      { new: true }
+    ).select("paymentDetails");
+
+    if (!user) {
+      return res.status(StatusCodes.NOT_FOUND).json({ message: "User not found." });
+    }
+
+    return res.status(StatusCodes.OK).json({
+      message: "Payment details deleted successfully.",
+      paymentDetails: user.paymentDetails,
+    });
+  } catch (err) {
+    return res.status(StatusCodes.INTERNAL_SERVER_ERROR).json({ message: err.message });
+  }
+};
+
+const uploadOwnerPaymentQrCode = async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(StatusCodes.BAD_REQUEST).json({ message: "Please upload a QR image file." });
+    }
+
+    const relativePath = `/uploads/payment/${path.basename(req.file.filename)}`;
+    const absoluteUrl = `${req.protocol}://${req.get("host")}${relativePath}`;
+
+    const user = await User.findByIdAndUpdate(
+      req.user.userId,
+      { "paymentDetails.qrCodeImageUrl": absoluteUrl },
+      { new: true }
+    ).select("paymentDetails");
+
+    if (!user) {
+      return res.status(StatusCodes.NOT_FOUND).json({ message: "User not found." });
+    }
+
+    return res.status(StatusCodes.OK).json({
+      message: "QR code uploaded successfully.",
+      qrCodeImageUrl: user.paymentDetails?.qrCodeImageUrl || absoluteUrl,
+      paymentDetails: user.paymentDetails,
+    });
+  } catch (err) {
+    return res.status(StatusCodes.INTERNAL_SERVER_ERROR).json({ message: err.message });
+  }
+};
+
+// ─────────────────────────────────────────────
+//  TENANT – FETCH OWNER PAYMENT DETAILS
+// ─────────────────────────────────────────────
+
+const getTenantOwnerPaymentDetails = async (req, res) => {
+  try {
+    const lease = await Lease.findOne({ tenant: req.user.userId, isActive: true }).populate("owner", "paymentDetails name");
+    if (!lease) return res.status(StatusCodes.NOT_FOUND).json({ message: "No active lease found." });
+    res.status(StatusCodes.OK).json({ paymentDetails: lease.owner?.paymentDetails || {}, ownerName: lease.owner?.name || "" });
+  } catch (err) {
+    res.status(StatusCodes.INTERNAL_SERVER_ERROR).json({ message: err.message });
+  }
+};
 
 
 // ─────────────────────────────────────────────
@@ -515,7 +714,7 @@ const terminateLease = async (req, res) => {
 
 const generateRentRecord = async (req, res) => {
   try {
-    const { leaseId, month, year, dueDate, notes } = req.body;
+    const { leaseId, month, year, dueDate, notes, paymentInstructions } = req.body;
     if (!leaseId || !month || !year || !dueDate) {
       return res.status(StatusCodes.BAD_REQUEST).json({ message: "leaseId, month, year, and dueDate are required." });
     }
@@ -529,6 +728,8 @@ const generateRentRecord = async (req, res) => {
       return res.status(StatusCodes.CONFLICT).json({ message: "Rent record already exists for this month/year." });
     }
 
+    const normalizedPaymentInstructions = sanitizePaymentInstructions(paymentInstructions);
+
     const rent = await RentPayment.create({
       lease: leaseId,
       property: lease.property,
@@ -541,6 +742,7 @@ const generateRentRecord = async (req, res) => {
       month,
       year,
       notes,
+      paymentInstructions: normalizedPaymentInstructions,
     });
 
     await sendMailEvent({
@@ -553,6 +755,9 @@ const generateRentRecord = async (req, res) => {
         `Property: ${lease.property?.propertyType || "Property"} (${lease.property?.address?.city || "N/A"})`,
         `Amount due: ${formatCurrency(lease.rentAmount)}`,
         `Due date: ${new Date(dueDate).toLocaleDateString()}`,
+        hasPaymentInstructions(normalizedPaymentInstructions)
+          ? "Payment instructions and QR details are available in your rent timeline."
+          : "Contact your owner for payment instructions if needed.",
       ],
       actionLabel: "View Rent Timeline",
       actionPath: "/tenant/rent",
@@ -581,9 +786,101 @@ const getOwnerRentPayments = async (req, res) => {
   }
 };
 
+const updateRentPaymentInstructions = async (req, res) => {
+  try {
+    const paymentInstructions = sanitizePaymentInstructions(req.body.paymentInstructions);
+    const rent = await RentPayment.findOneAndUpdate(
+      { _id: req.params.id, owner: req.user.userId },
+      { paymentInstructions },
+      { new: true }
+    )
+      .populate("property", "propertyType address")
+      .populate("tenant", "name email");
+
+    if (!rent) return res.status(StatusCodes.NOT_FOUND).json({ message: "Rent record not found." });
+
+    await createNotification({
+      recipient: rent.tenant?._id,
+      role: "tenant",
+      title: "Rent payment details updated",
+      message: `Payment details for ${rent.month} ${rent.year} are available for review.`,
+      type: "rent",
+      actionPath: "/tenant/rent",
+      metadata: { rentId: rent._id },
+    });
+
+    res.status(StatusCodes.OK).json({ message: "Payment details updated.", rent });
+  } catch (err) {
+    res.status(StatusCodes.INTERNAL_SERVER_ERROR).json({ message: err.message });
+  }
+};
+
+const submitTenantRentPayment = async (req, res) => {
+  try {
+    const { transactionId, paidDate, notes } = req.body;
+    if (!transactionId || !String(transactionId).trim()) {
+      return res.status(StatusCodes.BAD_REQUEST).json({ message: "Transaction ID is required." });
+    }
+
+    const rentRecord = await RentPayment.findOne({ _id: req.params.id, tenant: req.user.userId })
+      .populate("owner", "name email")
+      .populate("tenant", "name email");
+
+    if (!rentRecord) return res.status(StatusCodes.NOT_FOUND).json({ message: "Rent record not found." });
+    if (rentRecord.status === "Paid") {
+      return res.status(StatusCodes.BAD_REQUEST).json({ message: "Rent is already marked as paid." });
+    }
+
+    const safePaidDate = paidDate ? new Date(paidDate) : new Date();
+    if (Number.isNaN(safePaidDate.getTime())) {
+      return res.status(StatusCodes.BAD_REQUEST).json({ message: "Invalid paidDate." });
+    }
+
+    rentRecord.paymentSubmission = {
+      status: "Submitted",
+      transactionId: String(transactionId).trim(),
+      paidAt: safePaidDate,
+      submittedAt: new Date(),
+      notes: (notes || "").trim(),
+    };
+    await rentRecord.save();
+
+    await createNotification({
+      recipient: rentRecord.owner?._id,
+      role: "owner",
+      title: "Tenant submitted rent payment",
+      message: `${rentRecord.tenant?.name || "Tenant"} submitted payment reference for ${rentRecord.month} ${rentRecord.year}.`,
+      type: "rent",
+      actionPath: "/owner/rent",
+      metadata: { rentId: rentRecord._id, transactionId: rentRecord.paymentSubmission.transactionId },
+    });
+
+    await sendMailEvent({
+      to: rentRecord.owner?.email,
+      subject: `Payment submitted by tenant: ${rentRecord.month} ${rentRecord.year}`,
+      recipientName: rentRecord.owner?.name,
+      heading: "Tenant submitted payment details",
+      lead: "Please verify the payment and mark rent as paid once received.",
+      highlights: [
+        `Tenant: ${rentRecord.tenant?.name || "Tenant"}`,
+        `Transaction ID: ${rentRecord.paymentSubmission.transactionId}`,
+        `Paid date: ${safePaidDate.toLocaleDateString()}`,
+      ],
+      actionLabel: "Review Rent Entry",
+      actionPath: "/owner/rent",
+      accent: "#0284c7",
+    });
+
+    const rent = await RentPayment.findById(rentRecord._id).populate("property", "propertyType address");
+    res.status(StatusCodes.OK).json({ message: "Payment submitted successfully. Waiting for owner confirmation.", rent });
+  } catch (err) {
+    res.status(StatusCodes.INTERNAL_SERVER_ERROR).json({ message: err.message });
+  }
+};
+
 const markRentPaid = async (req, res) => {
   try {
-    const { paidDate, notes } = req.body;
+    const { paidDate, notes, transactionId } = req.body;
 
     const rentRecord = await RentPayment.findOne({ _id: req.params.id, owner: req.user.userId });
     if (!rentRecord) return res.status(StatusCodes.NOT_FOUND).json({ message: "Rent record not found." });
@@ -591,14 +888,24 @@ const markRentPaid = async (req, res) => {
     const receiptNumber = rentRecord.receiptNumber || `RCPT-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
     const totalAmount = Number((Number(rentRecord.amount || 0) + Number(rentRecord.lateFeeAmount || 0)).toFixed(2));
 
+    const resolvedPaidDate = paidDate || rentRecord.paymentSubmission?.paidAt || new Date();
+    const resolvedTransactionId = (transactionId || rentRecord.paymentSubmission?.transactionId || "").trim();
+
     const rent = await RentPayment.findOneAndUpdate(
       { _id: req.params.id, owner: req.user.userId },
       {
         status: "Paid",
-        paidDate: paidDate || new Date(),
+        paidDate: resolvedPaidDate,
         notes,
         receiptNumber,
         totalAmount,
+        paymentSubmission: {
+          status: "Verified",
+          transactionId: resolvedTransactionId,
+          paidAt: resolvedPaidDate,
+          submittedAt: rentRecord.paymentSubmission?.submittedAt || new Date(),
+          notes: rentRecord.paymentSubmission?.notes || "",
+        },
       },
       { new: true }
     )
@@ -625,6 +932,7 @@ const markRentPaid = async (req, res) => {
         `Month: ${rent.month} ${rent.year}`,
         `Receipt: ${receiptNumber}`,
         `Total paid: ${formatCurrency(totalAmount)}`,
+        resolvedTransactionId ? `Transaction ID: ${resolvedTransactionId}` : "Transaction ID: Not provided",
       ],
       actionLabel: "Download Receipt",
       actionPath: "/tenant/rent",
@@ -1795,6 +2103,7 @@ const decideLeaseRenewal = async (req, res) => {
 const downloadRentReceipt = async (req, res) => {
   try {
     const rent = await RentPayment.findOne({ _id: req.params.id, status: "Paid" })
+      .populate("lease", "leaseStartDate leaseEndDate")
       .populate("property", "propertyType address")
       .populate("tenant", "name email phone")
       .populate("owner", "name email phone");
@@ -1817,29 +2126,167 @@ const downloadRentReceipt = async (req, res) => {
     const doc = new PDFDocument({ margin: 50 });
     doc.pipe(res);
 
-    doc.fontSize(20).text("Rent Payment Receipt", { align: "center" });
-    doc.moveDown();
-    doc.fontSize(11);
-    doc.text(`Receipt No: ${rent.receiptNumber || "N/A"}`);
-    doc.text(`Month/Year: ${rent.month} ${rent.year}`);
-    doc.text(`Paid Date: ${rent.paidDate ? new Date(rent.paidDate).toLocaleDateString() : "N/A"}`);
-    doc.moveDown();
-    doc.text(`Tenant: ${rent.tenant?.name || "-"}`);
-    doc.text(`Owner: ${rent.owner?.name || "-"}`);
-    doc.text(`Property: ${rent.property?.propertyType || "-"}`);
-    doc.text(
-      `Address: ${rent.property?.address?.street || ""}, ${rent.property?.address?.city || ""}, ${rent.property?.address?.state || ""}`
-    );
-    doc.moveDown();
-    doc.text(`Base Rent: $${Number(rent.amount || 0).toFixed(2)}`);
-    doc.text(`Late Fee: $${Number(rent.lateFeeAmount || 0).toFixed(2)}`);
-    doc.font("Helvetica-Bold").text(`Total Paid: $${Number(rent.totalAmount || rent.amount || 0).toFixed(2)}`);
-    doc.font("Helvetica");
+    const totalPaid = Number(rent.totalAmount || rent.amount || 0);
+    const baseRent = Number(rent.amount || 0);
+    const lateFee = Number(rent.lateFeeAmount || 0);
+    const rentPeriod = `${rent.month || "-"} ${rent.year || ""}`.trim();
+    const paidDate = rent.paidDate ? new Date(rent.paidDate).toLocaleDateString() : "-";
+    const dueDate = rent.dueDate ? new Date(rent.dueDate).toLocaleDateString() : "-";
+    const paymentSubmittedOn = rent.paymentSubmission?.submittedAt
+      ? new Date(rent.paymentSubmission.submittedAt).toLocaleDateString()
+      : "N/A";
+    const paymentMethod = rent.paymentSubmission?.transactionId
+      ? "UPI/Bank Transfer"
+      : "Manual Confirmation";
 
-    if (rent.notes) {
-      doc.moveDown();
-      doc.text(`Notes: ${rent.notes}`);
+    const propertyAddress = [
+      rent.property?.address?.street,
+      rent.property?.address?.city,
+      rent.property?.address?.state,
+      rent.property?.address?.zipCode,
+      rent.property?.address?.country,
+    ]
+      .filter(Boolean)
+      .join(", ");
+
+    const pageWidth = doc.page.width;
+    const contentWidth = pageWidth - 100;
+
+    let cursorY = 42;
+    const footerReserve = 72;
+
+    const ensureSpace = (requiredHeight) => {
+      if (cursorY + requiredHeight > doc.page.height - footerReserve) {
+        doc.addPage();
+        cursorY = 42;
+      }
+    };
+
+    const drawSectionHeader = (title) => {
+      ensureSpace(34);
+      doc.roundedRect(50, cursorY, contentWidth, 24, 6).fill("#eef2ff");
+      doc.fillColor("#1e3a8a").font("Helvetica-Bold").fontSize(11).text(title, 62, cursorY + 7);
+      cursorY += 30;
+    };
+
+    const drawPartyCard = (x, y, title, lines) => {
+      const width = (contentWidth - 14) / 2;
+      doc.roundedRect(x, y, width, 92, 8).fillAndStroke("#f8fafc", "#e2e8f0");
+      doc.fillColor("#334155").font("Helvetica-Bold").fontSize(10).text(title, x + 12, y + 10);
+      let lineY = y + 28;
+      lines.forEach((line) => {
+        doc.fillColor("#0f172a").font("Helvetica").fontSize(9.5).text(line || "-", x + 12, lineY, { width: width - 24 });
+        lineY += 14;
+      });
+    };
+
+    const drawKeyValue = (x, y, label, value, width = 240) => {
+      doc.fillColor("#64748b").font("Helvetica-Bold").fontSize(9).text(label, x, y, { width });
+      doc.fillColor("#0f172a").font("Helvetica").fontSize(10).text(value || "-", x, y + 12, { width });
+    };
+
+    // Header
+    doc.roundedRect(50, cursorY, contentWidth, 88, 10).fill("#1d4ed8");
+    doc.fillColor("#ffffff").font("Helvetica-Bold").fontSize(22).text("PAYMENT RECEIPT", 66, cursorY + 22);
+    doc.font("Helvetica").fontSize(10).fillColor("#dbeafe").text("Property Management System", 66, cursorY + 52);
+
+    const chipX = pageWidth - 250;
+    doc.roundedRect(chipX, cursorY + 14, 184, 60, 8).fill("#eff6ff");
+    doc.fillColor("#1e3a8a").font("Helvetica-Bold").fontSize(9).text("RECEIPT NO", chipX + 12, cursorY + 24);
+    doc.fillColor("#0f172a").fontSize(11).text(rent.receiptNumber || "N/A", chipX + 12, cursorY + 38);
+    doc.fillColor("#334155").font("Helvetica").fontSize(8.5).text(`Generated ${new Date().toLocaleDateString()}`, chipX + 12, cursorY + 54);
+
+    cursorY += 102;
+
+    // Receipt Information
+    drawSectionHeader("Receipt Information");
+    ensureSpace(62);
+    drawKeyValue(50, cursorY, "Rent Period", rentPeriod);
+    drawKeyValue(300, cursorY, "Payment Date", paidDate);
+    drawKeyValue(50, cursorY + 30, "Due Date", dueDate);
+    drawKeyValue(300, cursorY + 30, "Status", "PAID");
+    cursorY += 68;
+
+    // Parties
+    drawSectionHeader("Parties");
+    ensureSpace(104);
+    drawPartyCard(50, cursorY, "Received From (Tenant)", [
+      rent.tenant?.name,
+      rent.tenant?.email,
+      rent.tenant?.phone,
+    ]);
+    drawPartyCard(50 + (contentWidth - 14) / 2 + 14, cursorY, "Received By (Owner)", [
+      rent.owner?.name,
+      rent.owner?.email,
+      rent.owner?.phone,
+    ]);
+    cursorY += 100;
+
+    // Property & Lease
+    drawSectionHeader("Property & Lease");
+    const leaseTerm = `${rent.lease?.leaseStartDate ? new Date(rent.lease.leaseStartDate).toLocaleDateString() : "-"} to ${rent.lease?.leaseEndDate ? new Date(rent.lease.leaseEndDate).toLocaleDateString() : "-"}`;
+    const addressHeight = doc.heightOfString(propertyAddress || "-", { width: contentWidth - 24, align: "left" });
+    ensureSpace(74 + Math.min(addressHeight, 56));
+    doc.roundedRect(50, cursorY, contentWidth, 74 + Math.min(addressHeight, 56), 8).fillAndStroke("#f8fafc", "#e2e8f0");
+    drawKeyValue(62, cursorY + 12, "Property Type", rent.property?.propertyType || "-");
+    drawKeyValue(300, cursorY + 12, "Lease Term", leaseTerm);
+    doc.fillColor("#64748b").font("Helvetica-Bold").fontSize(9).text("Property Address", 62, cursorY + 42);
+    doc.fillColor("#0f172a").font("Helvetica").fontSize(10).text(propertyAddress || "-", 62, cursorY + 54, { width: contentWidth - 24 });
+    cursorY += 80 + Math.min(addressHeight, 56);
+
+    // Payment Details
+    drawSectionHeader("Payment Details");
+    ensureSpace(62);
+    drawKeyValue(50, cursorY, "Payment Method", paymentMethod);
+    drawKeyValue(300, cursorY, "Transaction ID", rent.paymentSubmission?.transactionId || "N/A");
+    drawKeyValue(50, cursorY + 30, "Submitted On", paymentSubmittedOn);
+    cursorY += 68;
+
+    // Amount Summary
+    drawSectionHeader("Amount Summary");
+    ensureSpace(98);
+    const summaryY = cursorY;
+    doc.roundedRect(50, summaryY, contentWidth, 88, 8).fillAndStroke("#f8fafc", "#cbd5e1");
+    doc.fillColor("#334155").font("Helvetica").fontSize(10).text("Base Rent", 64, summaryY + 14);
+    doc.text(formatCurrency(baseRent), pageWidth - 170, summaryY + 14, { width: 100, align: "right" });
+    doc.text("Late Fee", 64, summaryY + 34);
+    doc.text(formatCurrency(lateFee), pageWidth - 170, summaryY + 34, { width: 100, align: "right" });
+    doc.moveTo(64, summaryY + 54).lineTo(pageWidth - 64, summaryY + 54).strokeColor("#cbd5e1").stroke();
+    doc.font("Helvetica-Bold").fontSize(11).fillColor("#0f172a").text("Total Amount Paid", 64, summaryY + 64);
+    doc.fillColor("#166534").text(formatCurrency(totalPaid), pageWidth - 170, summaryY + 64, { width: 100, align: "right" });
+    cursorY += 94;
+
+    if (rent.notes || rent.paymentSubmission?.notes) {
+      drawSectionHeader("Additional Notes");
+      const ownerNoteHeight = rent.notes
+        ? doc.heightOfString(rent.notes, { width: contentWidth - 24 }) + 20
+        : 0;
+      const tenantNoteHeight = rent.paymentSubmission?.notes
+        ? doc.heightOfString(rent.paymentSubmission.notes, { width: contentWidth - 24 }) + 20
+        : 0;
+      ensureSpace(ownerNoteHeight + tenantNoteHeight + 16);
+
+      if (rent.notes) {
+        doc.fillColor("#64748b").font("Helvetica-Bold").fontSize(9).text("Owner Note", 50, cursorY);
+        doc.fillColor("#0f172a").font("Helvetica").fontSize(9.5).text(rent.notes, 50, cursorY + 12, { width: contentWidth });
+        cursorY += ownerNoteHeight;
+      }
+
+      if (rent.paymentSubmission?.notes) {
+        doc.fillColor("#64748b").font("Helvetica-Bold").fontSize(9).text("Tenant Submission Note", 50, cursorY);
+        doc.fillColor("#0f172a").font("Helvetica").fontSize(9.5).text(rent.paymentSubmission.notes, 50, cursorY + 12, { width: contentWidth });
+        cursorY += tenantNoteHeight;
+      }
     }
+
+    const footerY = Math.max(cursorY + 10, doc.page.height - 64);
+    doc.moveTo(50, footerY).lineTo(pageWidth - 50, footerY).strokeColor("#cbd5e1").stroke();
+    doc.font("Helvetica").fontSize(9).fillColor("#64748b").text(
+      "This is a system generated receipt and does not require a physical signature.",
+      50,
+      footerY + 10,
+      { align: "center", width: contentWidth }
+    );
 
     doc.end();
   } catch (err) {
@@ -2085,10 +2532,16 @@ module.exports = {
   // Owner – Rent
   generateRentRecord,
   getOwnerRentPayments,
+  updateRentPaymentInstructions,
   markRentPaid,
   markRentOverdue,
   downloadRentReceipt,
   exportOwnerRentCsv,
+  // Owner – Payment Details
+  getOwnerPaymentDetails,
+  updateOwnerPaymentDetails,
+  deleteOwnerPaymentDetails,
+  uploadOwnerPaymentQrCode,
   // Owner – Vacancy
   getVacantProperties,
   updatePropertyStatus,
@@ -2104,6 +2557,8 @@ module.exports = {
   getTenantDashboard,
   getTenantLease,
   getTenantRentHistory,
+  submitTenantRentPayment,
+  getTenantOwnerPaymentDetails,
   getTenantInquiries,
   createMaintenanceRequest,
   getTenantMaintenanceRequests,

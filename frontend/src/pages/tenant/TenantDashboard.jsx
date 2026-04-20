@@ -21,6 +21,9 @@ import {
   ShieldCheck,
   MessageCircle,
   Home,
+  Rocket,
+  ArrowRight,
+  Sparkles,
 } from "lucide-react";
 import { Modal, PageHeader, StatusBadge } from "../../components/UI";
 import api from "../../utils/api";
@@ -233,6 +236,39 @@ const TenantDashboard = () => {
     if (!lease?.property?._id || !renewal.property?._id) return false;
     return renewal.property._id === lease.property._id;
   });
+  const successReadiness = Math.round(
+    ((lease ? 1 : 0) + (complianceDocs.length > 0 ? 1 : 0) + (inquiries.length > 0 ? 1 : 0) + (payableRent === 0 ? 1 : 0)) / 4 * 100
+  );
+  const openInquiryCount = inquiries.filter((inq) => ["New", "In Progress"].includes(inq.status || "New")).length;
+  const conversionSteps = [
+    {
+      id: "rent",
+      title: "Clear pending dues",
+      desc: "Pay on time to keep your tenancy profile healthy.",
+      done: payableRent === 0,
+      cta: "Pay Rent",
+      action: () => navigate("/tenant/rent"),
+    },
+    {
+      id: "docs",
+      title: "Upload compliance docs",
+      desc: "Verified documentation builds trust quickly.",
+      done: complianceDocs.length > 0,
+      cta: "Upload Docs",
+      action: () => setDocsModal(true),
+    },
+    {
+      id: "inquiry",
+      title: "Engage with owner",
+      desc: "Follow-up on inquiries to move deals faster.",
+      done: openInquiryCount === 0 && inquiries.length > 0,
+      cta: "Open Inquiries",
+      action: () => {
+        const section = document.getElementById("tenant-inquiries-section");
+        if (section) section.scrollIntoView({ behavior: "smooth", block: "start" });
+      },
+    },
+  ];
   const handleMoveOutRequest = async (e) => {
     e.preventDefault();
     setSubmittingMoveOut(true);
@@ -357,7 +393,72 @@ const TenantDashboard = () => {
         </button>
       </div>
 
-      <section className="rounded-2xl border border-gray-100 bg-white/95 p-5 shadow-[0_8px_24px_rgba(15,23,42,0.06)]">
+      <section className="grid grid-cols-1 xl:grid-cols-3 gap-5">
+        <div className="xl:col-span-2 rounded-2xl border border-gray-100 bg-white/95 p-5 shadow-[0_8px_24px_rgba(15,23,42,0.06)]">
+          <div className="mb-4 flex items-start justify-between gap-3">
+            <div>
+              <h3 className="flex items-center gap-2 text-base font-semibold text-gray-900">
+                <Rocket size={18} className="text-indigo-600" /> Tenant Success Accelerator
+              </h3>
+              <p className="mt-1 text-xs text-gray-500">Complete these actions to improve owner confidence and close faster on opportunities.</p>
+            </div>
+            <span className="rounded-full bg-indigo-50 px-2.5 py-1 text-xs font-semibold text-indigo-700">
+              Readiness {successReadiness}%
+            </span>
+          </div>
+
+          <div className="mb-4 h-2.5 rounded-full bg-gray-100">
+            <div
+              className="h-2.5 rounded-full bg-gradient-to-r from-indigo-500 via-blue-500 to-cyan-500"
+              style={{ width: `${successReadiness}%` }}
+            />
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            {conversionSteps.map((step) => (
+              <div key={step.id} className="rounded-xl border border-gray-100 bg-gradient-to-br from-white to-slate-50 p-3.5">
+                <p className="text-sm font-semibold text-gray-900">{step.title}</p>
+                <p className="mt-1 text-xs text-gray-500">{step.desc}</p>
+                <div className="mt-3 flex items-center justify-between gap-2">
+                  {step.done ? (
+                    <span className="inline-flex items-center gap-1 rounded-md border border-emerald-200 bg-emerald-50 px-2 py-1 text-[11px] font-semibold text-emerald-700">
+                      <CheckCircle2 size={12} /> Completed
+                    </span>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={step.action}
+                      className="inline-flex items-center gap-1 rounded-md border border-gray-200 bg-white px-2.5 py-1.5 text-[11px] font-semibold text-gray-700 hover:bg-gray-50"
+                    >
+                      {step.cta} <ArrowRight size={12} />
+                    </button>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="rounded-2xl border border-cyan-100 bg-gradient-to-br from-cyan-50 via-blue-50 to-indigo-50 p-5 shadow-[0_8px_24px_rgba(15,23,42,0.06)]">
+          <h3 className="flex items-center gap-2 text-base font-semibold text-gray-900">
+            <Sparkles size={17} className="text-cyan-600" /> Why Owners Respond Faster
+          </h3>
+          <div className="mt-3 space-y-2.5 text-sm text-gray-700">
+            <div className="rounded-lg border border-white/80 bg-white/80 p-2.5">On-time payments increase trust and approval speed.</div>
+            <div className="rounded-lg border border-white/80 bg-white/80 p-2.5">Clear documentation reduces verification delays.</div>
+            <div className="rounded-lg border border-white/80 bg-white/80 p-2.5">Active communication improves conversion of inquiries.</div>
+          </div>
+          <button
+            type="button"
+            onClick={() => navigate("/")}
+            className="mt-4 inline-flex w-full items-center justify-center gap-1.5 rounded-xl bg-gradient-to-r from-cyan-600 to-blue-600 px-3.5 py-2 text-xs font-semibold text-white hover:from-cyan-500 hover:to-blue-500"
+          >
+            Explore More Listings <ArrowRight size={13} />
+          </button>
+        </div>
+      </section>
+
+      <section id="tenant-inquiries-section" className="rounded-2xl border border-gray-100 bg-white/95 p-5 shadow-[0_8px_24px_rgba(15,23,42,0.06)]">
         <div className="mb-4 flex items-center justify-between">
           <h3 className="flex items-center gap-2 text-base font-semibold text-gray-900">
             <BellRing size={18} className="text-blue-600" /> Smart Alerts

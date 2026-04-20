@@ -293,6 +293,24 @@ const OwnerDashboard = () => {
   const onboardingDone = onboardingSteps.filter((step) => step.done).length;
   const onboardingProgress = (onboardingDone / onboardingSteps.length) * 100;
 
+  const inquiryTotals = recentInquiries.reduce(
+    (acc, inquiry) => {
+      const status = (inquiry.status || "New").toLowerCase();
+      if (status === "new") acc.new += 1;
+      else if (status === "in progress") acc.inProgress += 1;
+      else if (status === "contacted") acc.contacted += 1;
+      else if (status === "closed") acc.closed += 1;
+      else acc.other += 1;
+      return acc;
+    },
+    { new: 0, inProgress: 0, contacted: 0, closed: 0, other: 0 }
+  );
+
+  const actionableLeads = inquiryTotals.new + inquiryTotals.inProgress;
+  const convertedLeads = inquiryTotals.contacted + inquiryTotals.closed;
+  const leadPool = actionableLeads + convertedLeads;
+  const conversionMomentum = leadPool > 0 ? (convertedLeads / leadPool) * 100 : 0;
+
   const exportAnalytics = async () => {
     try {
       const response = await api.get("/owner/analytics/export", { responseType: "blob" });
@@ -453,7 +471,135 @@ const OwnerDashboard = () => {
           </div>
         </section>
 
+        <section className="rounded-2xl border border-emerald-100 bg-gradient-to-br from-emerald-50 via-teal-50 to-cyan-50 p-5 shadow-[0_8px_24px_rgba(15,23,42,0.06)]">
+          <div className="mb-4 flex items-start justify-between gap-3">
+            <div>
+              <h3 className="flex items-center gap-2 text-base font-semibold text-gray-900">
+                <Rocket size={18} className="text-emerald-600" /> Client Acquisition Sprint
+              </h3>
+              <p className="mt-1 text-xs text-gray-600">
+                Prioritize hot leads and respond faster to improve conversion this week.
+              </p>
+            </div>
+            <span className="rounded-full border border-emerald-200 bg-white px-2.5 py-1 text-xs font-semibold text-emerald-700">
+              Momentum {conversionMomentum.toFixed(0)}%
+            </span>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4">
+            <div className="rounded-xl border border-white/80 bg-white/90 p-3">
+              <p className="text-[11px] font-semibold uppercase tracking-wider text-gray-500">New Leads</p>
+              <p className="mt-1 text-2xl font-extrabold text-gray-900">{inquiryTotals.new}</p>
+              <p className="text-xs text-gray-500">Need first response</p>
+            </div>
+            <div className="rounded-xl border border-white/80 bg-white/90 p-3">
+              <p className="text-[11px] font-semibold uppercase tracking-wider text-gray-500">Active Follow-ups</p>
+              <p className="mt-1 text-2xl font-extrabold text-gray-900">{inquiryTotals.inProgress}</p>
+              <p className="text-xs text-gray-500">In negotiation stage</p>
+            </div>
+            <div className="rounded-xl border border-white/80 bg-white/90 p-3">
+              <p className="text-[11px] font-semibold uppercase tracking-wider text-gray-500">Converted/Contacted</p>
+              <p className="mt-1 text-2xl font-extrabold text-gray-900">{convertedLeads}</p>
+              <p className="text-xs text-gray-500">Relationship in motion</p>
+            </div>
+          </div>
+
+          <div className="rounded-xl border border-emerald-100 bg-white/80 p-3.5">
+            <div className="mb-2.5 flex items-center justify-between gap-2">
+              <p className="text-sm font-semibold text-gray-800">Quick Actions</p>
+              <p className="text-xs text-gray-500">Fast path to close more clients</p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => navigate("/owner/inquiries")}
+                className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-500"
+              >
+                Review Inquiry Queue ({actionableLeads})
+              </button>
+              <button
+                type="button"
+                onClick={() => navigate("/owner/vacancies")}
+                className="rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-semibold text-gray-700 hover:bg-gray-50"
+              >
+                Promote Vacant Units
+              </button>
+              <button
+                type="button"
+                onClick={() => navigate("/owner/properties")}
+                className="rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-semibold text-gray-700 hover:bg-gray-50"
+              >
+                Refresh Listing Details
+              </button>
+            </div>
+          </div>
+        </section>
+
       </div>
+
+      <section className="rounded-2xl border border-gray-100 bg-white/95 p-5 shadow-[0_8px_24px_rgba(15,23,42,0.06)]">
+        <div className="mb-4 flex items-center justify-between gap-2">
+          <h3 className="flex items-center gap-2 text-base font-semibold text-gray-900">
+            <Mail size={18} className="text-indigo-600" /> High-Intent Leads
+          </h3>
+          <button
+            type="button"
+            onClick={() => navigate("/owner/inquiries")}
+            className="rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-semibold text-gray-700 hover:bg-gray-50"
+          >
+            View All Leads
+          </button>
+        </div>
+
+        {recentInquiries.filter((i) => ["New", "In Progress"].includes(i.status || "New")).length === 0 ? (
+          <div className="rounded-xl border border-gray-100 bg-gray-50 px-4 py-3 text-sm text-gray-600">
+            No urgent leads right now. Keep listings fresh to attract new inquiries.
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+            {recentInquiries
+              .filter((i) => ["New", "In Progress"].includes(i.status || "New"))
+              .slice(0, 4)
+              .map((lead) => (
+                <div key={lead._id} className="rounded-xl border border-indigo-100 bg-gradient-to-br from-white to-indigo-50/40 p-3.5">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <p className="text-sm font-semibold text-gray-900">{lead.inquirer?.name || "Prospect"}</p>
+                      <p className="text-xs text-gray-600 mt-0.5">
+                        Interested in {lead.property?.propertyType || "property"} - {lead.property?.address?.city || "N/A"}
+                      </p>
+                      <p className="text-xs text-gray-500 mt-1">{lead.inquirer?.email || "No email"}</p>
+                    </div>
+                    <span className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${
+                      (lead.status || "New") === "New"
+                        ? "bg-amber-50 text-amber-700 border border-amber-200"
+                        : "bg-blue-50 text-blue-700 border border-blue-200"
+                    }`}>
+                      {lead.status || "New"}
+                    </span>
+                  </div>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={() => updateInquiryStatus(lead._id, "Contacted")}
+                      disabled={updatingInquiryId === lead._id}
+                      className="rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-indigo-500 disabled:opacity-60"
+                    >
+                      Mark Contacted
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => navigate("/owner/inquiries")}
+                      className="rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-semibold text-gray-700 hover:bg-gray-50"
+                    >
+                      Open Lead
+                    </button>
+                  </div>
+                </div>
+              ))}
+          </div>
+        )}
+      </section>
 
       <section className="rounded-2xl border border-gray-100 bg-white/95 p-5 shadow-[0_8px_24px_rgba(15,23,42,0.06)]">
         <div className="mb-4 flex items-center justify-between">

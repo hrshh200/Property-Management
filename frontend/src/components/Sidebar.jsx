@@ -3,7 +3,7 @@ import { NavLink, useLocation } from "react-router-dom";
 import { useSelector } from "react-redux";
 import {
   Building2, LayoutDashboard, Home, Users, DollarSign,
-  Wrench, Menu, X, MapPin, ChevronRight, UserCircle2, Bell, RefreshCcw, DoorOpen, MessageCircle, ChevronDown,
+  Wrench, Menu, X, MapPin, ChevronRight, UserCircle2, Bell, RefreshCcw, DoorOpen, MessageCircle, ChevronDown, Landmark,
 } from "lucide-react";
 
 const ownerLinks = [
@@ -32,6 +32,7 @@ const ownerLinks = [
     section: "Financial & Operations",
     items: [
       { to: "/owner/rent", label: "Rent Management", icon: DollarSign },
+      { to: "/owner/payment-details", label: "Payment Details", icon: Landmark },
       { to: "/owner/maintenance", label: "Maintenance", icon: Wrench },
     ]
   },

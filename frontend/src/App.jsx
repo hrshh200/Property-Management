@@ -27,6 +27,7 @@ import TenantsLeases from "./pages/owner/TenantsLeases";
 import LeaseRenewals from "./pages/owner/LeaseRenewals";
 import MoveOutRequests from "./pages/owner/MoveOutRequests";
 import RentManagement from "./pages/owner/RentManagement";
+import OwnerPaymentDetails from "./pages/owner/OwnerPaymentDetails";
 import Maintenance from "./pages/owner/Maintenance";
 import Vacancies from "./pages/owner/Vacancies";
 import OwnerInquiries from "./pages/owner/OwnerInquiries";
@@ -101,6 +102,7 @@ function App() {
             <Route path="renewals" element={<LeaseRenewals />} />
             <Route path="move-out" element={<MoveOutRequests />} />
             <Route path="rent" element={<RentManagement />} />
+            <Route path="payment-details" element={<OwnerPaymentDetails />} />
             <Route path="maintenance" element={<Maintenance />} />
             <Route path="inquiries" element={<OwnerInquiries />} />
             <Route path="vacancies" element={<Vacancies />} />
