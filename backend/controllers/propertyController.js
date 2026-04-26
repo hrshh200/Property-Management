@@ -7,6 +7,7 @@ const Property = require("../models/Property");
 const Lease = require("../models/Lease");
 const RentPayment = require("../models/RentPayment");
 const MaintenanceRequest = require("../models/MaintenanceRequest");
+const Vendor = require("../models/Vendor");
 const MoveOutRequest = require("../models/MoveOutRequest");
 const ComplianceDocument = require("../models/ComplianceDocument");
 const LeaseRenewal = require("../models/LeaseRenewal");
@@ -14,6 +15,7 @@ const PropertyInquiry = require("../models/PropertyInquiry");
 const Notification = require("../models/Notification");
 const Expense = require("../models/Expense");
 const PropertyReview = require("../models/PropertyReview");
+const VendorLead = require("../models/VendorLead");
 const PDFDocument = require("pdfkit");
 const { StatusCodes } = require("http-status-codes");
 const { sendEventEmail } = require("../services/emailService");
@@ -47,6 +49,94 @@ const sendMailEvent = async (payload) => {
   } catch (_) {
     // Non-blocking side effect
   }
+};
+
+const DEFAULT_VENDOR_PASSWORD = String(process.env.VENDOR_DEFAULT_PASSWORD || "Vendor@123");
+
+const splitHumanName = (input = "") => {
+  const parts = String(input || "")
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+  const firstName = parts[0] || "Vendor";
+  const lastName = parts.length > 1 ? parts[parts.length - 1] : "Partner";
+  const middleName = parts.length > 2 ? parts.slice(1, -1).join(" ") : "";
+  return {
+    firstName,
+    middleName,
+    lastName,
+    fullName: [firstName, middleName, lastName].filter(Boolean).join(" "),
+  };
+};
+
+const ensureVendorPortalAccount = async ({ vendor, preferredName = "" }) => {
+  if (!vendor) return { created: false, linked: false };
+  if (vendor.userId) return { created: false, linked: true };
+
+  const normalizedEmail = String(vendor.email || "").trim().toLowerCase();
+  if (!normalizedEmail) {
+    return { created: false, linked: false, reason: "Vendor email is missing." };
+  }
+
+  const existingUser = await User.findOne({ email: normalizedEmail });
+  if (existingUser) {
+    if (existingUser.role !== "vendor") {
+      return {
+        created: false,
+        linked: false,
+        reason: "Email already belongs to a non-vendor account.",
+      };
+    }
+    vendor.userId = existingUser._id;
+    vendor.isActive = true;
+    await vendor.save();
+    return { created: false, linked: true, existingUserLinked: true };
+  }
+
+  const nameBits = splitHumanName(preferredName || vendor.name || "Vendor Partner");
+  const phoneDigits = String(vendor.phone || "")
+    .replace(/\D/g, "")
+    .slice(-15);
+
+  const createdUser = await User.create({
+    firstName: nameBits.firstName,
+    middleName: nameBits.middleName,
+    lastName: nameBits.lastName,
+    name: nameBits.fullName,
+    email: normalizedEmail,
+    password: DEFAULT_VENDOR_PASSWORD,
+    phone: phoneDigits || "0000000000",
+    role: "vendor",
+    isActive: true,
+  });
+
+  vendor.userId = createdUser._id;
+  vendor.email = normalizedEmail;
+  vendor.isActive = true;
+  await vendor.save();
+
+  await sendMailEvent({
+    to: normalizedEmail,
+    subject: "Your Vendor Portal account is ready",
+    heading: "Vendor account provisioned",
+    lead: "Your vendor request has been approved and your portal login is active.",
+    highlights: [
+      `Login Email: ${normalizedEmail}`,
+      `Default Password: ${DEFAULT_VENDOR_PASSWORD}`,
+      "Please log in and change your password from Vendor Dashboard profile section.",
+    ],
+    actionPath: "/login",
+    accent: "#0d9488",
+  });
+
+  return {
+    created: true,
+    linked: true,
+    credentials: {
+      email: normalizedEmail,
+      defaultPassword: DEFAULT_VENDOR_PASSWORD,
+    },
+  };
 };
 
 const calculateSlaDueAt = (urgency) => {
@@ -90,6 +180,115 @@ const hasPaymentInstructions = (instructions = {}) => {
       instructions.upiId ||
       instructions.qrCodeImageUrl
   );
+};
+
+const getMissingVendorMaintenanceExpenses = async ({ ownerOid, fyStart, fyEnd }) => {
+  const paidRequests = await MaintenanceRequest.find({
+    owner: ownerOid,
+    "vendorPaymentRequest.status": "Paid",
+    $or: [
+      { "vendorPaymentRequest.paidAt": { $gte: fyStart, $lte: fyEnd } },
+      {
+        $and: [
+          {
+            $or: [
+              { "vendorPaymentRequest.paidAt": { $exists: false } },
+              { "vendorPaymentRequest.paidAt": null },
+            ],
+          },
+          { updatedAt: { $gte: fyStart, $lte: fyEnd } },
+        ],
+      },
+    ],
+  }).select("_id property category vendorQuote vendorPaymentRequest updatedAt");
+
+  if (!paidRequests.length) {
+    return { total: 0, monthlyRows: [], categoryRows: [], entries: [] };
+  }
+
+  const requestIds = paidRequests.map((req) => req._id);
+  const linkedExpenses = await Expense.find({
+    owner: ownerOid,
+    maintenanceRequest: { $in: requestIds },
+  }).select("maintenanceRequest");
+
+  const linkedRequestSet = new Set(linkedExpenses.map((row) => String(row.maintenanceRequest)));
+  const fallbackEntries = [];
+  const monthlyMap = {};
+  let total = 0;
+
+  for (const request of paidRequests) {
+    if (linkedRequestSet.has(String(request._id))) continue;
+
+    const amount = parseMoney(request.vendorPaymentRequest?.amount || request.vendorQuote?.amount || 0);
+    if (amount <= 0) continue;
+
+    const paidAt = request.vendorPaymentRequest?.paidAt
+      ? new Date(request.vendorPaymentRequest.paidAt)
+      : new Date(request.updatedAt);
+    if (Number.isNaN(paidAt.getTime())) continue;
+
+    total += amount;
+    const month = paidAt.getMonth() + 1;
+    const year = paidAt.getFullYear();
+    const key = `${year}-${month}`;
+    monthlyMap[key] = (monthlyMap[key] || 0) + amount;
+
+    fallbackEntries.push({
+      maintenanceRequest: request._id,
+      property: request.property,
+      category: "Maintenance",
+      title: `Vendor maintenance - ${request.category}`,
+      amount,
+      date: paidAt,
+      notes: "Derived from paid vendor maintenance request (fallback accounting).",
+      source: "vendor-maintenance",
+    });
+  }
+
+  const monthlyRows = Object.entries(monthlyMap)
+    .map(([key, amount]) => {
+      const [year, month] = key.split("-").map(Number);
+      return { _id: { month, year }, total: amount };
+    })
+    .sort((a, b) => (a._id.year - b._id.year) || (a._id.month - b._id.month));
+
+  const categoryRows = total > 0 ? [{ _id: "Maintenance", total }] : [];
+  return { total, monthlyRows, categoryRows, entries: fallbackEntries };
+};
+
+const mergeAggregateRows = (baseRows = [], addonRows = []) => {
+  const merged = {};
+
+  for (const row of baseRows) {
+    const key = `${row._id.year}-${row._id.month}`;
+    merged[key] = (merged[key] || 0) + Number(row.total || 0);
+  }
+  for (const row of addonRows) {
+    const key = `${row._id.year}-${row._id.month}`;
+    merged[key] = (merged[key] || 0) + Number(row.total || 0);
+  }
+
+  return Object.entries(merged)
+    .map(([key, total]) => {
+      const [year, month] = key.split("-").map(Number);
+      return { _id: { month, year }, total };
+    })
+    .sort((a, b) => (a._id.year - b._id.year) || (a._id.month - b._id.month));
+};
+
+const mergeCategoryRows = (baseRows = [], addonRows = []) => {
+  const merged = {};
+  for (const row of baseRows) {
+    merged[row._id] = (merged[row._id] || 0) + Number(row.total || 0);
+  }
+  for (const row of addonRows) {
+    merged[row._id] = (merged[row._id] || 0) + Number(row.total || 0);
+  }
+
+  return Object.entries(merged)
+    .map(([category, total]) => ({ _id: category, total }))
+    .sort((a, b) => b.total - a.total);
 };
 
 const validateOwnerPaymentDetails = (details = {}) => {
@@ -401,7 +600,34 @@ const signIn = async (req, res) => {
     if (!email || !password) {
       return res.status(StatusCodes.BAD_REQUEST).json({ message: "Email and password are required." });
     }
-    const user = await User.findOne({ email: email.toLowerCase() });
+
+    const normalizedEmail = String(email || "").trim().toLowerCase();
+    const adminEmail = String(process.env.ADMIN_LOGIN_EMAIL || "admin@admin.com").trim().toLowerCase();
+    const adminPassword = String(process.env.ADMIN_LOGIN_PASSWORD || "admin");
+
+    // Special admin login path requested for direct admin dashboard access.
+    if (normalizedEmail === adminEmail && password === adminPassword) {
+      const token = jwt.sign(
+        { userId: "admin-root", role: "admin", name: "System Admin", email: adminEmail },
+        process.env.JWT_SECRET,
+        { expiresIn: process.env.JWT_EXPIRES_IN || "7d" }
+      );
+
+      return res.status(StatusCodes.OK).json({
+        message: "Admin login successful.",
+        token,
+        user: {
+          _id: "admin-root",
+          name: "System Admin",
+          email: adminEmail,
+          role: "admin",
+          phone: "",
+          profilePictureUrl: "",
+        },
+      });
+    }
+
+    const user = await User.findOne({ email: normalizedEmail });
     if (!user) {
       return res.status(StatusCodes.UNAUTHORIZED).json({ message: "Invalid credentials." });
     }
@@ -1181,6 +1407,7 @@ const getOwnerMaintenanceRequests = async (req, res) => {
     const requests = await MaintenanceRequest.find(filter)
       .populate("property", "propertyType address")
       .populate("tenant", "name email phone")
+      .populate("assignedVendor", "name phone email specializations city")
       .populate("comments.addedBy", "name role")
       .sort({ createdAt: -1 });
     res.status(StatusCodes.OK).json({ requests });
@@ -1255,6 +1482,425 @@ const addCommentToRequest = async (req, res) => {
     ).populate("comments.addedBy", "name role");
     if (!request) return res.status(StatusCodes.NOT_FOUND).json({ message: "Request not found." });
     res.status(StatusCodes.OK).json({ message: "Comment added.", request });
+  } catch (err) {
+    res.status(StatusCodes.INTERNAL_SERVER_ERROR).json({ message: err.message });
+  }
+};
+
+// ─────────────────────────────────────────────
+//  OWNER – VENDORS
+// ─────────────────────────────────────────────
+
+const APP_VENDOR_DIRECTORY = [
+  {
+    name: "SparkLine Electricals",
+    phone: "+91 98765 11001",
+    email: "dispatch@sparklineelectricals.in",
+    specializations: ["Electric"],
+    city: "Ahmedabad",
+    notes: "24/7 emergency response for wiring and meter issues.",
+  },
+  {
+    name: "FlowFast Plumbing Co.",
+    phone: "+91 98765 22002",
+    email: "support@flowfastplumbing.in",
+    specializations: ["Plumbing"],
+    city: "Ahmedabad",
+    notes: "Leak repair, pipe replacement, drainage and fittings.",
+  },
+  {
+    name: "UrbanFix Carpentry",
+    phone: "+91 98765 33003",
+    email: "care@urbanfixcarpentry.in",
+    specializations: ["Carpentry", "General"],
+    city: "Ahmedabad",
+    notes: "Door, cabinet, and furniture repair specialists.",
+  },
+  {
+    name: "PrimeCoat Painters",
+    phone: "+91 98765 44004",
+    email: "bookings@primecoat.in",
+    specializations: ["Painting"],
+    city: "Ahmedabad",
+    notes: "Interior and exterior paint work with quick turnaround.",
+  },
+  {
+    name: "RapidCare Facility Services",
+    phone: "+91 98765 55005",
+    email: "ops@rapidcarefacility.in",
+    specializations: ["General", "Other"],
+    city: "Ahmedabad",
+    notes: "General handyman and mixed maintenance support.",
+  },
+];
+
+const ensureAppVendorDirectory = async () => {
+  const existingCount = await Vendor.countDocuments({ managedByApp: true, isActive: true });
+  if (existingCount > 0) return;
+
+  await Vendor.insertMany(
+    APP_VENDOR_DIRECTORY.map((v) => ({
+      ...v,
+      managedByApp: true,
+      source: "app-directory",
+      isActive: true,
+    }))
+  );
+};
+
+// ─────────────────────────────────────────────
+//  PUBLIC – VENDOR MARKETING LEADS
+// ─────────────────────────────────────────────
+
+const submitVendorLead = async (req, res) => {
+  try {
+    const { companyName, contactName, email, phone, city, specializations, message } = req.body;
+    if (!companyName || !contactName || !email || !phone) {
+      return res.status(StatusCodes.BAD_REQUEST).json({
+        message: "Company name, contact name, email, and phone are required.",
+      });
+    }
+
+    const normalizedSpecializations = Array.isArray(specializations)
+      ? specializations.filter(Boolean)
+      : [];
+
+    const lead = await VendorLead.create({
+      companyName,
+      contactName,
+      email,
+      phone,
+      city: city || "",
+      specializations: normalizedSpecializations,
+      message: message || "",
+      status: "New",
+    });
+
+    res.status(StatusCodes.CREATED).json({
+      message: "Thanks! Your details were submitted. Our team will contact you soon.",
+      lead,
+    });
+  } catch (err) {
+    res.status(StatusCodes.INTERNAL_SERVER_ERROR).json({ message: err.message });
+  }
+};
+
+const getOwnerVendors = async (req, res) => {
+  try {
+    await ensureAppVendorDirectory();
+    const vendors = await Vendor.find({ managedByApp: true, isActive: true }).sort({ name: 1 });
+    res.status(StatusCodes.OK).json({ vendors });
+  } catch (err) {
+    res.status(StatusCodes.INTERNAL_SERVER_ERROR).json({ message: err.message });
+  }
+};
+
+const assignVendorToMaintenanceRequest = async (req, res) => {
+  try {
+    const { vendorId } = req.body;
+    const request = await MaintenanceRequest.findOne({ _id: req.params.id, owner: req.user.userId })
+      .populate("tenant", "_id name email");
+    if (!request) return res.status(StatusCodes.NOT_FOUND).json({ message: "Maintenance request not found." });
+
+    if (!vendorId) {
+      request.assignedVendor = undefined;
+      request.vendorAssignedAt = undefined;
+      await request.save();
+      return res.status(StatusCodes.OK).json({ message: "Vendor unassigned.", request });
+    }
+
+    const vendor = await Vendor.findOne({ _id: vendorId, managedByApp: true, isActive: true });
+    if (!vendor) return res.status(StatusCodes.NOT_FOUND).json({ message: "Vendor not found." });
+
+    request.assignedVendor = vendor._id;
+    request.vendorAssignedAt = new Date();
+    if (request.status === "Open") request.status = "In Progress";
+    await request.save();
+
+    const populated = await MaintenanceRequest.findById(request._id)
+      .populate("property", "propertyType address")
+      .populate("tenant", "name email phone")
+      .populate("assignedVendor", "name phone email specializations city")
+      .populate("comments.addedBy", "name role");
+
+    await createNotification({
+      recipient: request.tenant?._id,
+      role: "tenant",
+      title: "Vendor assigned to maintenance request",
+      message: `${vendor.name} has been assigned for your ${request.category} request.`,
+      type: "maintenance",
+      actionPath: "/tenant/maintenance",
+      metadata: { requestId: request._id, vendorId: vendor._id },
+    });
+
+    await sendMailEvent({
+      to: request.tenant?.email,
+      subject: `Vendor assigned: ${request.category} maintenance`,
+      recipientName: request.tenant?.name,
+      heading: "A vendor has been assigned",
+      lead: "Your owner assigned a maintenance vendor to your request.",
+      highlights: [
+        `Vendor: ${vendor.name}`,
+        `Phone: ${vendor.phone}`,
+        vendor.email ? `Email: ${vendor.email}` : null,
+        `Issue: ${request.category}`,
+      ],
+      actionLabel: "View Request",
+      actionPath: "/tenant/maintenance",
+      accent: "#0ea5e9",
+    });
+
+    res.status(StatusCodes.OK).json({ message: "Vendor assigned.", request: populated });
+  } catch (err) {
+    res.status(StatusCodes.INTERNAL_SERVER_ERROR).json({ message: err.message });
+  }
+};
+
+// ─────────────────────────────────────────────
+//  ADMIN – VENDOR DIRECTORY
+// ─────────────────────────────────────────────
+
+const getAdminVendors = async (_req, res) => {
+  try {
+    await ensureAppVendorDirectory();
+
+    // Keep vendor directory aligned with all already-approved vendor leads.
+    const approvedLeads = await VendorLead.find({ status: "Approved" });
+    for (const lead of approvedLeads) {
+      const lookup = [];
+      if (lead.email) lookup.push({ email: lead.email });
+      if (lead.phone) lookup.push({ phone: lead.phone });
+      if (lead.companyName && lead.phone) lookup.push({ name: lead.companyName, phone: lead.phone });
+
+      const existing = lookup.length
+        ? await Vendor.findOne({ managedByApp: true, $or: lookup })
+        : null;
+
+      if (!existing) {
+        const createdVendor = await Vendor.create({
+          name: lead.companyName,
+          phone: lead.phone,
+          email: lead.email,
+          city: lead.city || "",
+          specializations: lead.specializations && lead.specializations.length ? lead.specializations : ["General"],
+          notes: lead.message || "",
+          managedByApp: true,
+          source: "vendor-lead",
+          isActive: true,
+        });
+        await ensureVendorPortalAccount({
+          vendor: createdVendor,
+          preferredName: lead.contactName || lead.companyName,
+        });
+      } else if (!existing.isActive) {
+        existing.isActive = true;
+        await existing.save();
+      }
+
+      if (existing) {
+        await ensureVendorPortalAccount({
+          vendor: existing,
+          preferredName: lead.contactName || lead.companyName,
+        });
+      }
+    }
+
+    const vendors = await Vendor.find({ managedByApp: true, isActive: true }).sort({ createdAt: -1 });
+    res.status(StatusCodes.OK).json({ vendors });
+  } catch (err) {
+    res.status(StatusCodes.INTERNAL_SERVER_ERROR).json({ message: err.message });
+  }
+};
+
+const createAdminVendor = async (req, res) => {
+  try {
+    const { name, phone, email, specializations, city, notes } = req.body;
+    if (!name || !phone) {
+      return res.status(StatusCodes.BAD_REQUEST).json({ message: "Vendor name and phone are required." });
+    }
+    const normalizedSpecializations = Array.isArray(specializations)
+      ? specializations.filter(Boolean)
+      : [];
+
+    const vendor = await Vendor.create({
+      managedByApp: true,
+      source: "admin-dashboard",
+      name,
+      phone,
+      email: email || "",
+      specializations: normalizedSpecializations,
+      city: city || "",
+      notes: notes || "",
+      isActive: true,
+    });
+
+    res.status(StatusCodes.CREATED).json({ message: "Vendor created.", vendor });
+  } catch (err) {
+    res.status(StatusCodes.INTERNAL_SERVER_ERROR).json({ message: err.message });
+  }
+};
+
+const updateAdminVendor = async (req, res) => {
+  try {
+    const { name, phone, email, specializations, city, notes, isActive } = req.body;
+    const normalizedSpecializations = Array.isArray(specializations)
+      ? specializations.filter(Boolean)
+      : undefined;
+
+    const vendor = await Vendor.findOneAndUpdate(
+      { _id: req.params.id, managedByApp: true },
+      {
+        ...(name !== undefined ? { name } : {}),
+        ...(phone !== undefined ? { phone } : {}),
+        ...(email !== undefined ? { email } : {}),
+        ...(specializations !== undefined ? { specializations: normalizedSpecializations } : {}),
+        ...(city !== undefined ? { city } : {}),
+        ...(notes !== undefined ? { notes } : {}),
+        ...(isActive !== undefined ? { isActive: Boolean(isActive) } : {}),
+      },
+      { new: true }
+    );
+
+    if (!vendor) return res.status(StatusCodes.NOT_FOUND).json({ message: "Vendor not found." });
+    res.status(StatusCodes.OK).json({ message: "Vendor updated.", vendor });
+  } catch (err) {
+    res.status(StatusCodes.INTERNAL_SERVER_ERROR).json({ message: err.message });
+  }
+};
+
+const deleteAdminVendor = async (req, res) => {
+  try {
+    const vendor = await Vendor.findOneAndUpdate(
+      { _id: req.params.id, managedByApp: true },
+      { isActive: false },
+      { new: true }
+    );
+    if (!vendor) return res.status(StatusCodes.NOT_FOUND).json({ message: "Vendor not found." });
+
+    await MaintenanceRequest.updateMany(
+      { assignedVendor: vendor._id, status: { $in: ["Open", "In Progress"] } },
+      { $unset: { assignedVendor: 1, vendorAssignedAt: 1 } }
+    );
+
+    res.status(StatusCodes.OK).json({ message: "Vendor deactivated." });
+  } catch (err) {
+    res.status(StatusCodes.INTERNAL_SERVER_ERROR).json({ message: err.message });
+  }
+};
+
+const getAdminVendorLeads = async (_req, res) => {
+  try {
+    const leads = await VendorLead.find().sort({ createdAt: -1 });
+    res.status(StatusCodes.OK).json({ leads });
+  } catch (err) {
+    res.status(StatusCodes.INTERNAL_SERVER_ERROR).json({ message: err.message });
+  }
+};
+
+const updateAdminVendorLeadStatus = async (req, res) => {
+  try {
+    const { status } = req.body;
+    if (!status || !["New", "Contacted", "Approved", "Rejected"].includes(status)) {
+      return res.status(StatusCodes.BAD_REQUEST).json({ message: "Invalid lead status." });
+    }
+
+    const lead = await VendorLead.findByIdAndUpdate(req.params.id, { status }, { new: true });
+    if (!lead) return res.status(StatusCodes.NOT_FOUND).json({ message: "Vendor lead not found." });
+
+    let syncedVendor = null;
+    let provisioning = null;
+
+    // Auto-create or reactivate a Vendor entry when a lead is Approved.
+    if (status === "Approved") {
+      const lookup = [];
+      if (lead.email) lookup.push({ email: lead.email });
+      if (lead.phone) lookup.push({ phone: lead.phone });
+      if (lead.companyName) lookup.push({ name: lead.companyName, phone: lead.phone });
+
+      const existing = lookup.length
+        ? await Vendor.findOne({ managedByApp: true, $or: lookup })
+        : null;
+
+      if (!existing) {
+        syncedVendor = await Vendor.create({
+          name: lead.companyName,
+          phone: lead.phone,
+          email: lead.email,
+          city: lead.city || "",
+          specializations: lead.specializations && lead.specializations.length ? lead.specializations : ["General"],
+          notes: lead.message || "",
+          managedByApp: true,
+          source: "vendor-lead",
+          isActive: true,
+        });
+      } else {
+        existing.name = lead.companyName || existing.name;
+        existing.phone = lead.phone || existing.phone;
+        existing.email = lead.email || existing.email;
+        existing.city = lead.city || existing.city;
+        existing.specializations =
+          lead.specializations && lead.specializations.length
+            ? lead.specializations
+            : existing.specializations;
+        existing.notes = lead.message || existing.notes;
+        existing.isActive = true;
+        syncedVendor = await existing.save();
+      }
+
+      provisioning = await ensureVendorPortalAccount({
+        vendor: syncedVendor,
+        preferredName: lead.contactName || lead.companyName,
+      });
+    }
+
+    res.status(StatusCodes.OK).json({ message: "Lead status updated.", lead, vendor: syncedVendor, provisioning });
+  } catch (err) {
+    res.status(StatusCodes.INTERNAL_SERVER_ERROR).json({ message: err.message });
+  }
+};
+
+// ─────────────────────────────────────────────
+//  ADMIN – PLATFORM STATS
+// ─────────────────────────────────────────────
+const getAdminStats = async (req, res) => {
+  try {
+    const [totalOwners, totalTenants, totalProperties, totalVendors, totalLeads] = await Promise.all([
+      User.countDocuments({ role: "owner" }),
+      User.countDocuments({ role: "tenant" }),
+      Property.countDocuments({ isActive: true }),
+      Vendor.countDocuments({ managedByApp: true, isActive: true }),
+      VendorLead.countDocuments({}),
+    ]);
+    const newLeads = await VendorLead.countDocuments({ status: "New" });
+    res.status(StatusCodes.OK).json({ totalOwners, totalTenants, totalProperties, totalVendors, totalLeads, newLeads });
+  } catch (err) {
+    res.status(StatusCodes.INTERNAL_SERVER_ERROR).json({ message: err.message });
+  }
+};
+
+const getAdminEntityList = async (req, res) => {
+  try {
+    const type = (req.query.type || "").toLowerCase();
+
+    if (type === "owners" || type === "tenants") {
+      const role = type === "owners" ? "owner" : "tenant";
+      const users = await User.find({ role })
+        .select("name email role createdAt updatedAt")
+        .sort({ createdAt: -1 });
+      return res.status(StatusCodes.OK).json({ type, items: users });
+    }
+
+    if (type === "properties") {
+      const properties = await Property.find({ isActive: true })
+        .populate("owner", "name email")
+        .select("propertyType address status rentAmount createdAt updatedAt owner")
+        .sort({ createdAt: -1 });
+      return res.status(StatusCodes.OK).json({ type, items: properties });
+    }
+
+    return res
+      .status(StatusCodes.BAD_REQUEST)
+      .json({ message: "Invalid type. Use owners, tenants, or properties." });
   } catch (err) {
     res.status(StatusCodes.INTERNAL_SERVER_ERROR).json({ message: err.message });
   }
@@ -1636,6 +2282,7 @@ const getTenantMaintenanceRequests = async (req, res) => {
   try {
     const requests = await MaintenanceRequest.find({ tenant: req.user.userId })
       .populate("property", "propertyType address")
+      .populate("assignedVendor", "name phone email specializations city")
       .populate("comments.addedBy", "name role")
       .sort({ createdAt: -1 });
     res.status(StatusCodes.OK).json({ requests });
@@ -3366,6 +4013,11 @@ const getAdvancedAnalytics = async (req, res) => {
       { $sort: { total: -1 } },
     ]);
 
+    // Fallback: include paid vendor maintenance requests missing linked expense rows
+    const missingMaintenance = await getMissingVendorMaintenanceExpenses({ ownerOid, fyStart, fyEnd });
+    const monthlyExpensesCombined = mergeAggregateRows(monthlyExpenses, missingMaintenance.monthlyRows);
+    const expensesByCategoryCombined = mergeCategoryRows(expensesByCategory, missingMaintenance.categoryRows);
+
     // Occupancy timeline (per property, count of months occupied vs total months in FY)
     const properties = await Property.find({ owner: ownerId, isActive: true }, "propertyType address status");
     const occupancyData = await Promise.all(
@@ -3404,7 +4056,7 @@ const getAdvancedAnalytics = async (req, res) => {
 
     const totalIncome = totalRentAgg[0]?.total || 0;
     const totalLateFees = totalRentAgg[0]?.lateFees || 0;
-    const totalExpensesAmount = totalExpensesAgg[0]?.total || 0;
+    const totalExpensesAmount = (totalExpensesAgg[0]?.total || 0) + missingMaintenance.total;
     const netProfit = totalIncome + totalLateFees - totalExpensesAmount;
 
     res.status(StatusCodes.OK).json({
@@ -3418,8 +4070,8 @@ const getAdvancedAnalytics = async (req, res) => {
         netProfit,
       },
       monthlyRent,
-      monthlyExpenses,
-      expensesByCategory,
+      monthlyExpenses: monthlyExpensesCombined,
+      expensesByCategory: expensesByCategoryCombined,
       occupancyData,
       maintenanceByCategory,
     });
@@ -3460,8 +4112,13 @@ const downloadTaxReport = async (req, res) => {
       Property.find({ owner: ownerOid, isActive: true }, "propertyType address"),
     ]);
 
+    const missingMaintenance = await getMissingVendorMaintenanceExpenses({ ownerOid, fyStart, fyEnd });
+    const reportExpenses = [...expenses, ...missingMaintenance.entries].sort(
+      (a, b) => new Date(a.date) - new Date(b.date)
+    );
+
     const totalIncome = rentPayments.reduce((s, r) => s + (r.amount || 0), 0);
-    const totalExpenses = expenses.reduce((s, e) => s + (e.amount || 0), 0);
+    const totalExpenses = reportExpenses.reduce((s, e) => s + (e.amount || 0), 0);
     const netProfit = totalIncome - totalExpenses;
 
     const doc = new PDFDocument({ margin: 50, size: "A4", bufferPages: true });
@@ -3538,11 +4195,11 @@ const downloadTaxReport = async (req, res) => {
     y += 10;
     sectionHeader("EXPENSES BY CATEGORY");
     const byCat = {};
-    expenses.forEach((e) => { byCat[e.category] = (byCat[e.category] || 0) + e.amount; });
+    reportExpenses.forEach((e) => { byCat[e.category] = (byCat[e.category] || 0) + e.amount; });
     Object.entries(byCat).forEach(([cat, total], i) => {
       row(cat, formatCurrency(total), i % 2 === 0);
     });
-    if (expenses.length === 0) {
+    if (reportExpenses.length === 0) {
       doc.fillColor("#64748b").font("Helvetica").fontSize(9).text("No expenses recorded.", 62, y); y += 16;
     }
 
@@ -4044,6 +4701,403 @@ const verifyRazorpayPayment = async (req, res) => {
   }
 };
 
+// ─────────────────────────────────────────────
+//  VENDOR – AUTH (self-register linking to directory entry)
+// ─────────────────────────────────────────────
+
+const vendorRegister = async (req, res) => {
+  try {
+    res.status(StatusCodes.BAD_REQUEST).json({
+      message:
+        "Vendor self-registration is disabled. Your account is created automatically when admin approves your vendor request.",
+    });
+  } catch (err) {
+    res.status(StatusCodes.INTERNAL_SERVER_ERROR).json({ message: err.message });
+  }
+};
+
+// ─────────────────────────────────────────────
+//  VENDOR – MAINTENANCE REQUESTS
+// ─────────────────────────────────────────────
+
+const getVendorProfile = async (req, res) => {
+  try {
+    const [vendor, user] = await Promise.all([
+      Vendor.findOne({ userId: req.user.userId }),
+      User.findById(req.user.userId).select("-password"),
+    ]);
+    if (!vendor) return res.status(StatusCodes.NOT_FOUND).json({ message: "Vendor profile not found." });
+    if (!user) return res.status(StatusCodes.NOT_FOUND).json({ message: "User profile not found." });
+    res.status(StatusCodes.OK).json({ vendor, user });
+  } catch (err) {
+    res.status(StatusCodes.INTERNAL_SERVER_ERROR).json({ message: err.message });
+  }
+};
+
+const updateVendorProfile = async (req, res) => {
+  try {
+    const {
+      firstName,
+      middleName,
+      lastName,
+      email,
+      countryCode,
+      phone,
+      vendorName,
+      city,
+      specializations,
+      notes,
+    } = req.body;
+
+    const [vendor, user] = await Promise.all([
+      Vendor.findOne({ userId: req.user.userId }),
+      User.findById(req.user.userId),
+    ]);
+
+    if (!vendor) return res.status(StatusCodes.NOT_FOUND).json({ message: "Vendor profile not found." });
+    if (!user) return res.status(StatusCodes.NOT_FOUND).json({ message: "User profile not found." });
+
+    const normalizedFirst = (firstName || user.firstName || "").trim();
+    const normalizedMiddle = (middleName !== undefined ? middleName : user.middleName || "").trim();
+    const normalizedLast = (lastName || user.lastName || "").trim();
+    const normalizedName = [normalizedFirst, normalizedMiddle, normalizedLast].filter(Boolean).join(" ");
+    const normalizedEmail = (email || user.email || "").trim().toLowerCase();
+    const normalizedCountryCode = ((countryCode || user.countryCode || "+91") + "").trim();
+    const normalizedPhoneDigits = (phone || user.phone || "").toString().replace(/\D/g, "");
+
+    if (!normalizedFirst || !normalizedLast || !normalizedEmail || !normalizedPhoneDigits) {
+      return res.status(StatusCodes.BAD_REQUEST).json({
+        message: "First name, last name, email and phone are required.",
+      });
+    }
+
+    const existing = await User.findOne({ email: normalizedEmail, _id: { $ne: req.user.userId } });
+    if (existing) {
+      return res.status(StatusCodes.CONFLICT).json({ message: "Email already in use by another account." });
+    }
+
+    user.firstName = normalizedFirst;
+    user.middleName = normalizedMiddle;
+    user.lastName = normalizedLast;
+    user.name = normalizedName;
+    user.email = normalizedEmail;
+    user.countryCode = normalizedCountryCode;
+    user.phone = `${normalizedCountryCode}${normalizedPhoneDigits}`;
+    await user.save();
+
+    if (vendorName !== undefined) vendor.name = String(vendorName || "").trim() || vendor.name;
+    if (city !== undefined) vendor.city = String(city || "").trim();
+    if (notes !== undefined) vendor.notes = String(notes || "").trim();
+    if (email !== undefined) vendor.email = normalizedEmail;
+    if (phone !== undefined) vendor.phone = normalizedPhoneDigits;
+    if (Array.isArray(specializations)) {
+      const cleanSpecs = specializations
+        .map((s) => String(s || "").trim())
+        .filter((s) => ["Electric", "Plumbing", "General", "Carpentry", "Painting", "Other"].includes(s));
+      vendor.specializations = cleanSpecs.length ? cleanSpecs : ["General"];
+    }
+
+    await vendor.save();
+
+    const safeUser = user.toObject();
+    delete safeUser.password;
+
+    res.status(StatusCodes.OK).json({ message: "Vendor profile updated.", user: safeUser, vendor });
+  } catch (err) {
+    res.status(StatusCodes.INTERNAL_SERVER_ERROR).json({ message: err.message });
+  }
+};
+
+const getVendorMaintenanceRequests = async (req, res) => {
+  try {
+    const vendor = await Vendor.findOne({ userId: req.user.userId });
+    if (!vendor) return res.status(StatusCodes.NOT_FOUND).json({ message: "Vendor profile not found." });
+
+    const { status } = req.query;
+    const filter = { assignedVendor: vendor._id };
+    if (status) filter.status = status;
+
+    const requests = await MaintenanceRequest.find(filter)
+      .populate("property", "propertyType address")
+      .populate("tenant", "name email phone")
+      .populate("owner", "name email phone")
+      .populate("assignedVendor", "name phone email specializations")
+      .sort({ createdAt: -1 });
+
+    res.status(StatusCodes.OK).json({ requests, vendor });
+  } catch (err) {
+    res.status(StatusCodes.INTERNAL_SERVER_ERROR).json({ message: err.message });
+  }
+};
+
+const submitVendorQuote = async (req, res) => {
+  try {
+    const vendor = await Vendor.findOne({ userId: req.user.userId });
+    if (!vendor) return res.status(StatusCodes.NOT_FOUND).json({ message: "Vendor profile not found." });
+
+    const { amount, description } = req.body;
+    if (!amount || !description) {
+      return res.status(StatusCodes.BAD_REQUEST).json({ message: "Quote amount and description are required." });
+    }
+
+    const request = await MaintenanceRequest.findOne({ _id: req.params.id, assignedVendor: vendor._id });
+    if (!request) return res.status(StatusCodes.NOT_FOUND).json({ message: "Maintenance request not found." });
+
+    if (request.quoteStatus === "Approved") {
+      return res.status(StatusCodes.BAD_REQUEST).json({ message: "Quote already approved. Cannot resubmit." });
+    }
+
+    request.vendorQuote = { amount: Number(amount), description, submittedAt: new Date() };
+    request.quoteStatus = "Pending";
+    await request.save();
+
+    const populated = await MaintenanceRequest.findById(request._id)
+      .populate("owner", "name email")
+      .populate("tenant", "name");
+
+    await createNotification({
+      recipient: populated.owner?._id,
+      role: "owner",
+      title: "Vendor submitted a quote",
+      message: `${vendor.name} submitted a quote of ₹${Number(amount).toLocaleString("en-IN")} for the ${request.category} request.`,
+      type: "maintenance",
+      actionPath: "/owner/maintenance",
+      metadata: { requestId: request._id },
+    });
+
+    res.status(StatusCodes.OK).json({ message: "Quote submitted. Awaiting owner approval.", request });
+  } catch (err) {
+    res.status(StatusCodes.INTERNAL_SERVER_ERROR).json({ message: err.message });
+  }
+};
+
+const uploadVendorWorkPhotos = async (req, res) => {
+  try {
+    const vendor = await Vendor.findOne({ userId: req.user.userId });
+    if (!vendor) return res.status(StatusCodes.NOT_FOUND).json({ message: "Vendor profile not found." });
+
+    const request = await MaintenanceRequest.findOne({ _id: req.params.id, assignedVendor: vendor._id });
+    if (!request) return res.status(StatusCodes.NOT_FOUND).json({ message: "Maintenance request not found." });
+
+    if (!req.files || req.files.length === 0) {
+      return res.status(StatusCodes.BAD_REQUEST).json({ message: "No photos uploaded." });
+    }
+
+    const photoPaths = req.files.map((f) => `/uploads/maintenance/${path.basename(f.filename)}`);
+    request.vendorWorkPhotos = [...(request.vendorWorkPhotos || []), ...photoPaths];
+    await request.save();
+
+    res.status(StatusCodes.OK).json({ message: "Work photos uploaded.", vendorWorkPhotos: request.vendorWorkPhotos });
+  } catch (err) {
+    res.status(StatusCodes.INTERNAL_SERVER_ERROR).json({ message: err.message });
+  }
+};
+
+const markVendorWorkComplete = async (req, res) => {
+  try {
+    const vendor = await Vendor.findOne({ userId: req.user.userId });
+    if (!vendor) return res.status(StatusCodes.NOT_FOUND).json({ message: "Vendor profile not found." });
+
+    const request = await MaintenanceRequest.findOne({ _id: req.params.id, assignedVendor: vendor._id });
+    if (!request) return res.status(StatusCodes.NOT_FOUND).json({ message: "Maintenance request not found." });
+
+    if (request.quoteStatus !== "Approved") {
+      return res.status(StatusCodes.BAD_REQUEST).json({ message: "Quote must be approved before marking work as complete." });
+    }
+
+    request.workCompletedAt = new Date();
+    request.status = "Resolved";
+    await request.save();
+
+    const populated = await MaintenanceRequest.findById(request._id)
+      .populate("owner", "name email")
+      .populate("tenant", "name email");
+
+    await createNotification({
+      recipient: populated.owner?._id,
+      role: "owner",
+      title: "Vendor marked work as complete",
+      message: `${vendor.name} has completed the ${request.category} maintenance work.`,
+      type: "maintenance",
+      actionPath: "/owner/maintenance",
+      metadata: { requestId: request._id },
+    });
+
+    await createNotification({
+      recipient: populated.tenant?._id,
+      role: "tenant",
+      title: "Maintenance work completed",
+      message: `The ${request.category} issue has been resolved by the vendor.`,
+      type: "maintenance",
+      actionPath: "/tenant/maintenance",
+      metadata: { requestId: request._id },
+    });
+
+    res.status(StatusCodes.OK).json({ message: "Work marked as complete.", request });
+  } catch (err) {
+    res.status(StatusCodes.INTERNAL_SERVER_ERROR).json({ message: err.message });
+  }
+};
+
+const raiseVendorPaymentRequest = async (req, res) => {
+  try {
+    const vendor = await Vendor.findOne({ userId: req.user.userId });
+    if (!vendor) return res.status(StatusCodes.NOT_FOUND).json({ message: "Vendor profile not found." });
+
+    const { amount, description } = req.body;
+    if (!amount) return res.status(StatusCodes.BAD_REQUEST).json({ message: "Payment amount is required." });
+
+    const request = await MaintenanceRequest.findOne({ _id: req.params.id, assignedVendor: vendor._id });
+    if (!request) return res.status(StatusCodes.NOT_FOUND).json({ message: "Maintenance request not found." });
+
+    if (!request.workCompletedAt) {
+      return res.status(StatusCodes.BAD_REQUEST).json({ message: "Work must be marked complete before raising a payment request." });
+    }
+
+    if (request.vendorPaymentRequest?.status === "Paid") {
+      return res.status(StatusCodes.BAD_REQUEST).json({ message: "Payment already completed." });
+    }
+
+    request.vendorPaymentRequest = {
+      amount: Number(amount),
+      description: description || `Payment for ${request.category} maintenance work`,
+      raisedAt: new Date(),
+      status: "Pending",
+    };
+    await request.save();
+
+    const populated = await MaintenanceRequest.findById(request._id).populate("owner", "name email");
+
+    await createNotification({
+      recipient: populated.owner?._id,
+      role: "owner",
+      title: "Vendor raised a payment request",
+      message: `${vendor.name} is requesting payment of ₹${Number(amount).toLocaleString("en-IN")} for ${request.category} work.`,
+      type: "maintenance",
+      actionPath: "/owner/maintenance",
+      metadata: { requestId: request._id },
+    });
+
+    res.status(StatusCodes.OK).json({ message: "Payment request raised. Awaiting owner payment.", request });
+  } catch (err) {
+    res.status(StatusCodes.INTERNAL_SERVER_ERROR).json({ message: err.message });
+  }
+};
+
+// ─────────────────────────────────────────────
+//  OWNER – VENDOR QUOTE DECISION & PAYMENT
+// ─────────────────────────────────────────────
+
+const decideVendorQuote = async (req, res) => {
+  try {
+    const { decision, rejectionNote } = req.body;
+    if (!["Approved", "Rejected"].includes(decision)) {
+      return res.status(StatusCodes.BAD_REQUEST).json({ message: "Decision must be Approved or Rejected." });
+    }
+
+    const request = await MaintenanceRequest.findOne({ _id: req.params.id, owner: req.user.userId })
+      .populate("assignedVendor", "name email userId")
+      .populate("tenant", "name email");
+    if (!request) return res.status(StatusCodes.NOT_FOUND).json({ message: "Maintenance request not found." });
+    if (request.quoteStatus !== "Pending") {
+      return res.status(StatusCodes.BAD_REQUEST).json({ message: "No pending quote to decide on." });
+    }
+
+    request.quoteStatus = decision;
+    if (decision === "Approved" && request.status === "Open") {
+      request.status = "In Progress";
+    }
+    if (rejectionNote) {
+      request.comments = request.comments || [];
+      request.comments.push({ text: `Quote rejected: ${rejectionNote}`, addedBy: req.user.userId });
+    }
+    await request.save();
+
+    // Notify the vendor user if linked
+    if (request.assignedVendor?.userId) {
+      await createNotification({
+        recipient: request.assignedVendor.userId,
+        role: "vendor",
+        title: `Quote ${decision.toLowerCase()}`,
+        message: decision === "Approved"
+          ? `Your quote of ₹${Number(request.vendorQuote?.amount || 0).toLocaleString("en-IN")} was approved. Please proceed with the work.`
+          : `Your quote was rejected.${rejectionNote ? ` Reason: ${rejectionNote}` : ""}`,
+        type: "maintenance",
+        actionPath: "/vendor/maintenance",
+        metadata: { requestId: request._id },
+      });
+    }
+
+    res.status(StatusCodes.OK).json({ message: `Quote ${decision.toLowerCase()}.`, request });
+  } catch (err) {
+    res.status(StatusCodes.INTERNAL_SERVER_ERROR).json({ message: err.message });
+  }
+};
+
+const completeVendorPayment = async (req, res) => {
+  try {
+    const { paymentNote } = req.body;
+    const request = await MaintenanceRequest.findOne({ _id: req.params.id, owner: req.user.userId })
+      .populate("property", "propertyType address")
+      .populate("assignedVendor", "name email userId")
+      .populate("tenant", "name email");
+    if (!request) return res.status(StatusCodes.NOT_FOUND).json({ message: "Maintenance request not found." });
+
+    if (request.vendorPaymentRequest?.status !== "Pending") {
+      return res.status(StatusCodes.BAD_REQUEST).json({ message: "No pending payment request to complete." });
+    }
+
+    request.vendorPaymentRequest.status = "Paid";
+    request.vendorPaymentRequest.paidAt = new Date();
+
+    if (request.assignedVendor?.userId) {
+      await createNotification({
+        recipient: request.assignedVendor.userId,
+        role: "vendor",
+        title: "Payment completed",
+        message: `The owner has completed payment of ₹${Number(request.vendorPaymentRequest?.amount || 0).toLocaleString("en-IN")} for the ${request.category} work.`,
+        type: "maintenance",
+        actionPath: "/vendor/maintenance",
+        metadata: { requestId: request._id },
+      });
+    }
+
+    if (paymentNote) {
+      request.comments = request.comments || [];
+      request.comments.push({ text: `Payment note: ${paymentNote}`, addedBy: req.user.userId });
+    }
+
+    await request.save();
+
+    const expenseAmount = parseMoney(
+      request.vendorQuote?.amount || request.vendorPaymentRequest?.amount || 0
+    );
+    if (expenseAmount > 0 && request.property) {
+      await Expense.create({
+        owner: req.user.userId,
+        property: request.property._id,
+        source: "vendor-maintenance",
+        maintenanceRequest: request._id,
+        category: "Maintenance",
+        title: `Vendor maintenance - ${request.category}`,
+        amount: expenseAmount,
+        date: request.vendorPaymentRequest.paidAt,
+        notes: [
+          request.assignedVendor?.name ? `Vendor: ${request.assignedVendor.name}` : null,
+          request.vendorQuote?.description ? `Quote: ${request.vendorQuote.description}` : null,
+          paymentNote ? `Owner note: ${paymentNote}` : null,
+        ]
+          .filter(Boolean)
+          .join(" | "),
+      });
+    }
+
+    res.status(StatusCodes.OK).json({ message: "Payment marked as completed.", request });
+  } catch (err) {
+    res.status(StatusCodes.INTERNAL_SERVER_ERROR).json({ message: err.message });
+  }
+};
+
 module.exports = {
   // Auth
   signUp,
@@ -4056,6 +5110,7 @@ module.exports = {
   addProperty,
   getOwnerProperties,
   getPublicProperties,
+  submitVendorLead,
   getPropertyById,
   updateProperty,
   uploadPropertyPhotos,
@@ -4090,6 +5145,29 @@ module.exports = {
   getOwnerMaintenanceRequests,
   updateMaintenanceStatus,
   addCommentToRequest,
+  // Owner – Vendors
+  getOwnerVendors,
+  assignVendorToMaintenanceRequest,
+  decideVendorQuote,
+  completeVendorPayment,
+  // Vendor Portal
+  vendorRegister,
+  getVendorProfile,
+  updateVendorProfile,
+  getVendorMaintenanceRequests,
+  submitVendorQuote,
+  uploadVendorWorkPhotos,
+  markVendorWorkComplete,
+  raiseVendorPaymentRequest,
+  // Admin – Vendors
+  getAdminVendors,
+  createAdminVendor,
+  updateAdminVendor,
+  deleteAdminVendor,
+  getAdminVendorLeads,
+  updateAdminVendorLeadStatus,
+  getAdminStats,
+  getAdminEntityList,
   // Owner – Dashboard
   getOwnerDashboard,
   getOwnerAnalytics,

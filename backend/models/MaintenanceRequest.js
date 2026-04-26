@@ -31,6 +31,37 @@ const maintenanceRequestSchema = new mongoose.Schema(
         addedAt: { type: Date, default: Date.now },
       },
     ],
+    assignedVendor: { type: mongoose.Schema.Types.ObjectId, ref: "Vendor" },
+    vendorAssignedAt: { type: Date },
+
+    // ── Vendor Quote ──────────────────────────────
+    vendorQuote: {
+      amount: { type: Number },
+      description: { type: String, trim: true },
+      submittedAt: { type: Date },
+    },
+    quoteStatus: {
+      type: String,
+      enum: ["NotSubmitted", "Pending", "Approved", "Rejected"],
+      default: "NotSubmitted",
+    },
+
+    // ── Work Done Photos (uploaded by vendor) ─────
+    vendorWorkPhotos: [{ type: String, trim: true }],
+    workCompletedAt: { type: Date },
+
+    // ── Vendor Payment Request ────────────────────
+    vendorPaymentRequest: {
+      amount: { type: Number },
+      description: { type: String, trim: true },
+      raisedAt: { type: Date },
+      paidAt: { type: Date },
+      status: {
+        type: String,
+        enum: ["NotRaised", "Pending", "Paid"],
+        default: "NotRaised",
+      },
+    },
   },
   { timestamps: true }
 );

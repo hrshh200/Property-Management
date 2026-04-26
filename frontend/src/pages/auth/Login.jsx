@@ -64,7 +64,15 @@ const Login = () => {
       dispatch(setCredentials({ user: data.user, token: data.token }));
       await submitPendingInquiryIfAny();
       toast.success(`Welcome back, ${data.user.name}!`);
-      navigate(data.user.role === "owner" ? "/owner/dashboard" : "/tenant/dashboard");
+      navigate(
+        data.user.role === "admin"
+          ? "/admin/dashboard"
+          : data.user.role === "owner"
+            ? "/owner/dashboard"
+            : data.user.role === "vendor"
+              ? "/vendor/dashboard"
+              : "/tenant/dashboard"
+      );
     } catch {
       const msg = "Invalid username or password. Please provide valid credentials.";
       setErrorMsg(msg);
@@ -225,6 +233,19 @@ const Login = () => {
             >
               Create a free account
             </Link>
+
+            <div className="flex items-center gap-3 py-1">
+              <div className="flex-grow border-t border-slate-200" />
+              <span className="bg-white px-4 text-xs text-slate-400">Are you a vendor?</span>
+              <div className="flex-grow border-t border-slate-200" />
+            </div>
+
+            <div className="w-full rounded-2xl border-2 border-teal-200 bg-teal-50/70 px-4 py-3 text-sm text-teal-800">
+              <p className="font-semibold">Vendor access is admin-approved.</p>
+              <p className="mt-1 text-xs text-teal-700">
+                Once your vendor request is approved by Admin, use your approved email and the common default password to log in.
+              </p>
+            </div>
 
             <div className="mt-5 grid gap-2 sm:grid-cols-3">
               {["Secure login", "Role-based access", "No ads"].map((t) => (

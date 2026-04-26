@@ -1,16 +1,18 @@
 const express = require("express");
 const router = express.Router();
-const { verifyToken, requireOwner, requireTenant } = require("../middleware/authMiddleware");
+const { verifyToken, requireOwner, requireTenant, requireVendor, requireAdmin } = require("../middleware/authMiddleware");
 const { uploadMaintenancePhotos, uploadComplianceDocument, uploadPaymentQrCode, uploadProfilePicture, uploadPropertyPhotos } = require("../middleware/uploadMiddleware");
 const {
   signUp, signIn, forgotPassword, getProfile, updateProfile,
   uploadProfilePicture: uploadProfilePictureController,
   addProperty, getOwnerProperties, getPropertyById, updateProperty, uploadPropertyPhotos: uploadPropertyPhotosController, removePropertyPhoto, deleteProperty,
-  getPublicProperties, createPropertyInquiry, getOwnerInquiries, updateOwnerInquiryStatus,
+  getPublicProperties, submitVendorLead, createPropertyInquiry, getOwnerInquiries, updateOwnerInquiryStatus,
   getTenantUsers, assignTenant, getOwnerLeases, updateLease, terminateLease,
   generateRentRecord, getOwnerRentPayments, updateRentPaymentInstructions, markRentPaid, markRentOverdue,
   getVacantProperties, updatePropertyStatus,
   getOwnerMaintenanceRequests, updateMaintenanceStatus, addCommentToRequest,
+  getOwnerVendors, assignVendorToMaintenanceRequest, decideVendorQuote, completeVendorPayment,
+  getAdminVendors, createAdminVendor, updateAdminVendor, deleteAdminVendor, getAdminVendorLeads, updateAdminVendorLeadStatus, getAdminStats, getAdminEntityList,
   getOwnerDashboard, getOwnerAnalytics, exportOwnerAnalyticsCsv,
   getTenantDashboard, getTenantLease, getTenantRentHistory, submitTenantRentPayment, getTenantOwnerPaymentDetails, getTenantInquiries, requestTenantRevisit,
   createMaintenanceRequest, getTenantMaintenanceRequests,
@@ -35,6 +37,8 @@ const {
   getAdvancedAnalytics, downloadTaxReport,
   downloadRentAgreement,
   submitPropertyReview, getPropertyReviews, getOwnerPropertyReviews, replyToReview, getTenantReviews, deleteReview,
+  // Vendor Portal
+  getVendorProfile, updateVendorProfile, getVendorMaintenanceRequests, submitVendorQuote, uploadVendorWorkPhotos, markVendorWorkComplete, raiseVendorPaymentRequest,
 } = require("../controllers/propertyController");
 
 // ── Auth ──────────────────────────────────────
@@ -47,6 +51,7 @@ router.post("/auth/profile-picture", verifyToken, uploadProfilePicture.single("p
 
 // ── Public – Property Discovery ──────────────
 router.get("/properties/public", getPublicProperties);
+router.post("/vendors/contact", submitVendorLead);
 router.get("/features/download", generateFeaturesDocument);
 
 // ── Owner – Dashboard ─────────────────────────
@@ -107,6 +112,37 @@ router.patch("/owner/renewals/:id/cancel", verifyToken, requireOwner, cancelLeas
 router.get("/owner/maintenance", verifyToken, requireOwner, getOwnerMaintenanceRequests);
 router.patch("/owner/maintenance/:id/status", verifyToken, requireOwner, updateMaintenanceStatus);
 router.post("/owner/maintenance/:id/comment", verifyToken, requireOwner, addCommentToRequest);
+router.patch("/owner/maintenance/:id/assign-vendor", verifyToken, requireOwner, assignVendorToMaintenanceRequest);
+router.patch("/owner/maintenance/:id/quote-decision", verifyToken, requireOwner, decideVendorQuote);
+router.patch("/owner/maintenance/:id/complete-payment", verifyToken, requireOwner, completeVendorPayment);
+
+// ── Vendor Portal ─────────────────────────────
+router.get("/vendor/profile", verifyToken, requireVendor, getVendorProfile);
+router.put("/vendor/profile", verifyToken, requireVendor, updateVendorProfile);
+router.get("/vendor/maintenance", verifyToken, requireVendor, getVendorMaintenanceRequests);
+router.post("/vendor/maintenance/:id/quote", verifyToken, requireVendor, submitVendorQuote);
+router.post(
+  "/vendor/maintenance/:id/work-photos",
+  verifyToken,
+  requireVendor,
+  uploadMaintenancePhotos.array("photos", 10),
+  uploadVendorWorkPhotos
+);
+router.patch("/vendor/maintenance/:id/complete", verifyToken, requireVendor, markVendorWorkComplete);
+router.post("/vendor/maintenance/:id/payment-request", verifyToken, requireVendor, raiseVendorPaymentRequest);
+
+// ── Owner – Vendors ───────────────────────────
+router.get("/owner/vendors", verifyToken, requireOwner, getOwnerVendors);
+
+// ── Admin – Vendor Directory & Leads ──────────
+router.get("/admin/stats", verifyToken, requireAdmin, getAdminStats);
+router.get("/admin/insights", verifyToken, requireAdmin, getAdminEntityList);
+router.get("/admin/vendors", verifyToken, requireAdmin, getAdminVendors);
+router.post("/admin/vendors", verifyToken, requireAdmin, createAdminVendor);
+router.put("/admin/vendors/:id", verifyToken, requireAdmin, updateAdminVendor);
+router.delete("/admin/vendors/:id", verifyToken, requireAdmin, deleteAdminVendor);
+router.get("/admin/vendor-leads", verifyToken, requireAdmin, getAdminVendorLeads);
+router.patch("/admin/vendor-leads/:id/status", verifyToken, requireAdmin, updateAdminVendorLeadStatus);
 
 // ── Owner – Move-Out Requests ──────────────────
 router.get("/owner/move-out", verifyToken, requireOwner, getOwnerMoveOutRequests);

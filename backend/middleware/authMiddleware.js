@@ -1,4 +1,5 @@
 const jwt = require("jsonwebtoken");
+const User = require("../models/User");
 
 const verifyToken = (req, res, next) => {
   const authHeader = req.headers.authorization;
@@ -29,4 +30,41 @@ const requireTenant = (req, res, next) => {
   next();
 };
 
-module.exports = { verifyToken, requireOwner, requireTenant };
+const requireVendor = (req, res, next) => {
+  if (req.user.role !== "vendor") {
+    return res.status(403).json({ message: "Access denied. Vendor only." });
+  }
+  next();
+};
+
+const requireAdmin = async (req, res, next) => {
+  try {
+    const defaultAdminEmail = String(process.env.ADMIN_LOGIN_EMAIL || "admin@admin.com").trim().toLowerCase();
+    const tokenEmail = String(req.user?.email || "").trim().toLowerCase();
+
+    if (req.user?.role === "admin" && tokenEmail === defaultAdminEmail) {
+      return next();
+    }
+
+    const allowList = String(process.env.ADMIN_EMAILS || "")
+      .split(",")
+      .map((email) => email.trim().toLowerCase())
+      .filter(Boolean);
+
+    if (allowList.length === 0) {
+      return res.status(503).json({ message: "Admin access is not configured." });
+    }
+
+    const user = await User.findById(req.user.userId).select("email");
+    const email = String(user?.email || "").trim().toLowerCase();
+    if (!email || !allowList.includes(email)) {
+      return res.status(403).json({ message: "Access denied. Admin only." });
+    }
+
+    next();
+  } catch (err) {
+    return res.status(500).json({ message: "Unable to verify admin access." });
+  }
+};
+
+module.exports = { verifyToken, requireOwner, requireTenant, requireVendor, requireAdmin };

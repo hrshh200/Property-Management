@@ -12,7 +12,7 @@ const userSchema = new mongoose.Schema(
     countryCode: { type: String, trim: true, default: "+91" },
     phone: { type: String, trim: true, required: true },
     profilePictureUrl: { type: String, trim: true, default: "" },
-    role: { type: String, enum: ["owner", "tenant"], required: true },
+    role: { type: String, enum: ["owner", "tenant", "vendor"], required: true },
     isActive: { type: Boolean, default: true },
     paymentDetails: {
       accountHolderName: { type: String, trim: true, default: "" },

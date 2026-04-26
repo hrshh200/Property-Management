@@ -4,6 +4,7 @@ import {
   Building2, Home, Users, DollarSign, Wrench, Shield,
   BarChart3, Bell, ChevronRight, ChevronLeft, Star, CheckCircle2,
   ArrowRight, Menu, X, MapPin, TrendingUp, Clock, Download,
+  BriefcaseBusiness,
 } from "lucide-react";
 import { formatCurrencyCompact, formatCurrency } from "../utils/currency";
 import api from "../utils/api";
@@ -347,6 +348,10 @@ const LandingPage = () => {
               Reviews
               <span className="absolute inset-x-3 -bottom-0.5 h-0.5 scale-x-0 rounded-full bg-gradient-to-r from-blue-500 to-cyan-500 transition-transform duration-200 group-hover:scale-x-100" />
             </a>
+            <a href="#vendor-program" className="group relative rounded-xl px-3 py-2 text-sm font-bold text-slate-700 transition-all duration-200 hover:text-blue-700 hover:bg-blue-50">
+              Vendor Program
+              <span className="absolute inset-x-3 -bottom-0.5 h-0.5 scale-x-0 rounded-full bg-gradient-to-r from-blue-500 to-cyan-500 transition-transform duration-200 group-hover:scale-x-100" />
+            </a>
           </nav>
 
           {/* CTA */}
@@ -384,6 +389,7 @@ const LandingPage = () => {
             <a href="#browse-properties" onClick={() => setMobileMenuOpen(false)} className="block text-sm font-medium text-gray-700 py-2">Browse Properties</a>
             <a href="#how-it-works" onClick={() => setMobileMenuOpen(false)} className="block text-sm font-medium text-gray-700 py-2">How it works</a>
             <a href="#testimonials" onClick={() => setMobileMenuOpen(false)} className="block text-sm font-medium text-gray-700 py-2">Reviews</a>
+            <a href="#vendor-program" onClick={() => setMobileMenuOpen(false)} className="block text-sm font-medium text-gray-700 py-2">Vendor Program</a>
             <div className="flex gap-3 pt-2">
               {isLoggedIn ? (
                 <button
@@ -719,6 +725,47 @@ const LandingPage = () => {
         </div>
       </section>
 
+      {/* ── VENDOR PROGRAM CTA ── */}
+      <section id="vendor-program" className="py-20 bg-gradient-to-b from-white to-indigo-50/70">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="rounded-3xl border border-indigo-100 bg-gradient-to-br from-indigo-900 via-blue-900 to-slate-900 text-white p-7 sm:p-8 shadow-xl">
+            <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-6">
+              <div>
+                <p className="inline-flex items-center gap-2 text-xs uppercase tracking-[0.18em] text-indigo-200 font-semibold">
+                  <BriefcaseBusiness size={13} /> Vendor Partnership Program
+                </p>
+                <h2 className="mt-3 text-3xl font-extrabold leading-tight">Are you a service vendor? Join the PropManager network.</h2>
+                <p className="mt-3 text-sm text-blue-100 max-w-2xl">
+                  We work with trusted electricians, plumbers, painters, carpenters, and facility teams. Submit your profile and start your vendor journey with us.
+                </p>
+                <div className="mt-5 grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
+                  {[
+                    "Consistent service leads",
+                    "Direct owner coordination",
+                    "Fast assignment workflow",
+                    "Long-term partnership growth",
+                  ].map((point) => (
+                    <p key={point} className="inline-flex items-center gap-2 text-blue-100">
+                      <CheckCircle2 size={14} className="text-emerald-300" /> {point}
+                    </p>
+                  ))}
+                </div>
+              </div>
+
+              <div className="shrink-0">
+                <Link
+                  to="/vendor-onboarding"
+                  className="inline-flex items-center justify-center gap-2 rounded-xl bg-white text-indigo-700 font-bold px-6 py-3.5 hover:bg-indigo-50 transition-colors shadow-lg"
+                >
+                  Start Vendor Journey
+                  <ArrowRight size={16} />
+                </Link>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
       {/* ── FEATURES ── */}
       <section id="features" className="py-24 bg-gradient-to-b from-white via-sky-50/50 to-white">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -1009,6 +1056,7 @@ const LandingPage = () => {
             <Link to="/terms-and-conditions" className="hover:text-white transition-colors">
               Terms & Conditions
             </Link>
+            <a href="#vendor-program" className="hover:text-white transition-colors">Vendor Program</a>
             {!isLoggedIn && (
               <>
                 <Link to="/login" className="hover:text-white transition-colors">Sign In</Link>

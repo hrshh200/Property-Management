@@ -4,7 +4,7 @@ import { useSelector } from "react-redux";
 import {
   Building2, LayoutDashboard, Home, Users, DollarSign,
   Wrench, Menu, X, MapPin, ChevronRight, UserCircle2, Bell, RefreshCcw, DoorOpen, MessageCircle, ChevronDown, Landmark,
-  Receipt, BarChart2, Star,
+  Receipt, BarChart2, Star, BriefcaseBusiness, ClipboardList,
 } from "lucide-react";
 
 import api from "../utils/api";
@@ -44,6 +44,7 @@ const ownerLinks = [
   {
     section: "Communication",
     items: [
+      { to: "/owner/vendors", label: "Vendors", icon: BriefcaseBusiness },
       { to: "/owner/inquiries", label: "Inquiries", icon: MessageCircle },
       { to: "/owner/reviews", label: "Property Reviews", icon: Star },
       { to: "/owner/notifications", label: "Notifications", icon: Bell },
@@ -56,8 +57,7 @@ const tenantLinks = [
   {
     section: "Dashboard",
     to: "/tenant/dashboard",
-    icon: LayoutDashboard,
-    items: []
+    icon: LayoutDashboard,    items: []
   },
   {
     section: "My Tenancy",
@@ -77,10 +77,33 @@ const tenantLinks = [
   },
 ];
 
+const vendorLinks = [
+  {
+    section: "Dashboard",
+    to: "/vendor/dashboard",
+    icon: LayoutDashboard,
+    items: [],
+  },
+  {
+    section: "My Jobs",
+    items: [
+      { to: "/vendor/maintenance", label: "Assigned Requests", icon: ClipboardList },
+    ],
+  },
+  {
+    section: "Account",
+    items: [
+      { to: "/vendor/notifications", label: "Notifications", icon: Bell },
+      { to: "/vendor/profile", label: "My Profile", icon: UserCircle2 },
+    ],
+  },
+];
+
 const Sidebar = () => {
   const location = useLocation();
   const { user } = useSelector((s) => s.auth);
   const isOwner = user?.role === "owner";
+  const isVendor = user?.role === "vendor";
   const [mobileOpen, setMobileOpen] = useState(false);
   const [expandedSections, setExpandedSections] = useState({});
   const [activeInquiryCount, setActiveInquiryCount] = useState(0);
@@ -95,7 +118,7 @@ const Sidebar = () => {
 
   // Auto-expand the section that contains the currently active route
   useEffect(() => {
-    const links = isOwner ? ownerLinks : tenantLinks;
+    const links = isOwner ? ownerLinks : isVendor ? vendorLinks : tenantLinks;
     links.forEach((section) => {
       if (section.items?.some((item) => location.pathname.startsWith(item.to))) {
         setExpandedSections((prev) => ({ ...prev, [section.section]: true }));
@@ -110,19 +133,27 @@ const Sidebar = () => {
     }));
   };
 
-  const links = user?.role === "owner" ? ownerLinks : tenantLinks;
+  const links = isOwner ? ownerLinks : isVendor ? vendorLinks : tenantLinks;
   const brandPanelClass = isOwner
     ? "from-indigo-100 via-white to-blue-100 border-indigo-100"
-    : "from-emerald-50 via-white to-cyan-50 border-emerald-100";
+    : isVendor
+      ? "from-teal-50 via-white to-emerald-50 border-teal-100"
+      : "from-emerald-50 via-white to-cyan-50 border-emerald-100";
   const brandIconClass = isOwner
     ? "from-indigo-600 to-blue-600"
-    : "from-emerald-600 to-cyan-600";
+    : isVendor
+      ? "from-teal-600 to-emerald-600"
+      : "from-emerald-600 to-cyan-600";
   const activeLinkClass = isOwner
     ? "bg-gradient-to-r from-indigo-600 to-blue-600 text-white shadow-[0_10px_24px_rgba(79,70,229,0.35)]"
-    : "bg-gradient-to-r from-emerald-600 to-cyan-600 text-white shadow-[0_10px_24px_rgba(5,150,105,0.35)]";
+    : isVendor
+      ? "bg-gradient-to-r from-teal-600 to-emerald-600 text-white shadow-[0_10px_24px_rgba(13,148,136,0.35)]"
+      : "bg-gradient-to-r from-emerald-600 to-cyan-600 text-white shadow-[0_10px_24px_rgba(5,150,105,0.35)]";
   const inactiveLinkClass = isOwner
     ? "text-slate-600 hover:bg-indigo-50 hover:text-indigo-700"
-    : "text-slate-600 hover:bg-emerald-50 hover:text-emerald-700";
+    : isVendor
+      ? "text-slate-600 hover:bg-teal-50 hover:text-teal-700"
+      : "text-slate-600 hover:bg-emerald-50 hover:text-emerald-700";
   const apiOrigin = (import.meta.env.VITE_API_URL || "http://localhost:5000/api").replace(/\/api\/?$/, "");
   const profilePictureUrl = user?.profilePictureUrl
     ? /^https?:\/\//i.test(user.profilePictureUrl)
@@ -196,6 +227,12 @@ const Sidebar = () => {
               return { bg: "from-cyan-50 to-blue-50", border: "border-cyan-100", icon: "bg-cyan-500", header: "text-cyan-700", line: "from-cyan-300", activeBg: "bg-cyan-100", activeText: "text-cyan-700", activeBorder: "border-cyan-400" };
             if (sectionName === "My Tenancy") 
               return { bg: "from-teal-50 to-emerald-50", border: "border-teal-100", icon: "bg-teal-500", header: "text-teal-700", line: "from-teal-300", activeBg: "bg-teal-100", activeText: "text-teal-700", activeBorder: "border-teal-400" };
+
+            // Vendor colors
+            if (sectionName === "My Jobs")
+              return { bg: "from-teal-50 to-emerald-50", border: "border-teal-100", icon: "bg-teal-500", header: "text-teal-700", line: "from-teal-300", activeBg: "bg-teal-100", activeText: "text-teal-700", activeBorder: "border-teal-400" };
+            if (sectionName === "Account")
+              return { bg: "from-slate-50 to-gray-50", border: "border-slate-100", icon: "bg-slate-500", header: "text-slate-700", line: "from-slate-300", activeBg: "bg-slate-100", activeText: "text-slate-700", activeBorder: "border-slate-400" };
             
             return { bg: "from-sky-50 to-indigo-50", border: "border-sky-100", icon: "bg-sky-500", header: "text-sky-700", line: "from-sky-300", activeBg: "bg-sky-100", activeText: "text-sky-700", activeBorder: "border-sky-400" };
           };

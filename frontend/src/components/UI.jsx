@@ -258,16 +258,29 @@ export const PageHeader = ({ title, subtitle, action }) => (
 /* ─────────────────────────────────────────────
    MODAL
 ───────────────────────────────────────────── */
-export const Modal = ({ isOpen, onClose, title, children, size = "md" }) => {
+export const Modal = ({ isOpen, onClose, title, children, size = "md", maxWidth }) => {
   if (!isOpen) return null;
-  const widthMap = { sm: "max-w-sm", md: "max-w-lg", lg: "max-w-2xl", xl: "max-w-3xl" };
+  const widthMap = {
+    sm: "max-w-sm",
+    md: "max-w-lg",
+    lg: "max-w-2xl",
+    xl: "max-w-3xl",
+    "2xl": "max-w-4xl",
+    "3xl": "max-w-5xl",
+    "4xl": "max-w-6xl",
+    "5xl": "max-w-7xl",
+    full: "max-w-[96vw]",
+  };
+  const modalWidth = maxWidth
+    ? (String(maxWidth).startsWith("max-w-") ? String(maxWidth) : `max-w-${maxWidth}`)
+    : (widthMap[size] || widthMap.md);
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center p-4 animate-overlay-in"
       style={{ background: "rgba(15,23,42,0.55)", backdropFilter: "blur(4px)" }}
       onClick={(e) => e.target === e.currentTarget && onClose()}
     >
-      <div className={`bg-white rounded-3xl shadow-2xl w-full ${widthMap[size] || widthMap.md}
+        <div className={`bg-white rounded-3xl shadow-2xl w-full ${modalWidth}
           max-h-[92vh] overflow-y-auto ring-1 ring-black/8 animate-modal-in`}>
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100

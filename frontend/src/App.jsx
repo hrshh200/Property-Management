@@ -4,6 +4,7 @@ import { Provider } from "react-redux";
 import { Toaster } from "react-hot-toast";
 import store from "./app/store";
 import ProtectedRoute from "./components/ProtectedRoute";
+import AdminProtectedRoute from "./components/AdminProtectedRoute";
 import Layout from "./components/Layout";
 
 // Landing
@@ -12,6 +13,7 @@ import BrowseProperties from "./pages/BrowseProperties";
 import FAQ from "./pages/FAQ";
 import PrivacyPolicy from "./pages/PrivacyPolicy";
 import TermsAndConditions from "./pages/TermsAndConditions";
+import VendorOnboarding from "./pages/VendorOnboarding";
 
 // Auth
 import Login from "./pages/auth/Login";
@@ -19,6 +21,11 @@ import Register from "./pages/auth/Register";
 import ForgotPassword from "./pages/auth/ForgotPassword";
 import Profile from "./pages/Profile";
 import Notifications from "./pages/Notifications";
+
+// Vendor
+import VendorDashboard from "./pages/vendor/VendorDashboard";
+import VendorMaintenance from "./pages/vendor/VendorMaintenance";
+import VendorMaintenanceDetail from "./pages/vendor/VendorMaintenanceDetail";
 
 // Owner
 import OwnerDashboard from "./pages/owner/OwnerDashboard";
@@ -32,6 +39,7 @@ import OwnerPaymentDetails from "./pages/owner/OwnerPaymentDetails";
 import Maintenance from "./pages/owner/Maintenance";
 import Vacancies from "./pages/owner/Vacancies";
 import OwnerInquiries from "./pages/owner/OwnerInquiries";
+import OwnerVendors from "./pages/owner/OwnerVendors";
 import Expenses from "./pages/owner/Expenses";
 import AdvancedAnalytics from "./pages/owner/AdvancedAnalytics";
 import PropertyReviews from "./pages/owner/PropertyReviews";
@@ -42,6 +50,7 @@ import TenantRent from "./pages/tenant/TenantRent";
 import TenantMaintenance from "./pages/tenant/TenantMaintenance";
 import TenantInquiries from "./pages/tenant/TenantInquiries";
 import TenantReview from "./pages/tenant/TenantReview";
+import AdminDashboard from "./pages/admin/AdminDashboard";
 
 function App() {
   return (
@@ -87,9 +96,20 @@ function App() {
           <Route path="/privacy-policy" element={<PrivacyPolicy />} />
           <Route path="/faq" element={<FAQ />} />
           <Route path="/terms-and-conditions" element={<TermsAndConditions />} />
+          <Route path="/vendor-onboarding" element={<VendorOnboarding />} />
           <Route path="/login" element={<Login />} />
           <Route path="/register" element={<Register />} />
           <Route path="/forgot-password" element={<ForgotPassword />} />
+
+          {/* Admin Route */}
+          <Route
+            path="/admin/dashboard"
+            element={
+              <AdminProtectedRoute>
+                <AdminDashboard />
+              </AdminProtectedRoute>
+            }
+          />
 
           {/* Owner Routes */}
           <Route
@@ -111,6 +131,7 @@ function App() {
             <Route path="payment-details" element={<OwnerPaymentDetails />} />
             <Route path="maintenance" element={<Maintenance />} />
             <Route path="inquiries" element={<OwnerInquiries />} />
+            <Route path="vendors" element={<OwnerVendors />} />
             <Route path="vacancies" element={<Vacancies />} />
             <Route path="expenses" element={<Expenses />} />
             <Route path="analytics" element={<AdvancedAnalytics />} />
@@ -136,6 +157,23 @@ function App() {
             <Route path="reviews" element={<TenantReview />} />
             <Route path="notifications" element={<Notifications />} />
             <Route path="profile" element={<Profile />} />
+          </Route>
+
+          {/* Vendor Routes */}
+          <Route
+            path="/vendor"
+            element={
+              <ProtectedRoute role="vendor">
+                <Layout />
+              </ProtectedRoute>
+            }
+          >
+            <Route index element={<Navigate to="/vendor/dashboard" replace />} />
+            <Route path="dashboard" element={<VendorDashboard />} />
+            <Route path="maintenance" element={<VendorMaintenance />} />
+            <Route path="maintenance/:id" element={<VendorMaintenanceDetail />} />
+            <Route path="notifications" element={<Notifications />} />
+            <Route path="profile" element={<Navigate to="/vendor/dashboard" replace />} />
           </Route>
 
           {/* Fallback */}

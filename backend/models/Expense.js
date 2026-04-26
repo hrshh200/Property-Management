@@ -13,6 +13,12 @@ const expenseSchema = new mongoose.Schema(
     amount: { type: Number, required: true, min: 0 },
     date: { type: Date, required: true },
     notes: { type: String, trim: true, maxlength: 500 },
+    source: {
+      type: String,
+      enum: ["manual", "vendor-maintenance"],
+      default: "manual",
+    },
+    maintenanceRequest: { type: mongoose.Schema.Types.ObjectId, ref: "MaintenanceRequest", default: null },
     financialYear: { type: String, trim: true }, // e.g. "2024-25"
   },
   { timestamps: true }

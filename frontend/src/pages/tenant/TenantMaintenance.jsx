@@ -7,6 +7,9 @@ import {
   MessageSquare,
   ImagePlus,
   X,
+  BriefcaseBusiness,
+  Phone,
+  Mail,
 } from "lucide-react";
 import { PageHeader, Modal, StatusBadge, EmptyState } from "../../components/UI";
 import api from "../../utils/api";
@@ -282,6 +285,22 @@ const TenantMaintenance = () => {
                     <span className="inline-flex items-center gap-1"><CalendarDays size={12} /> Filed on {new Date(r.createdAt).toLocaleDateString()}</span>
                     <span className="inline-flex items-center gap-1"><MapPin size={12} /> {r.property?.propertyType}, {r.property?.address?.city}</span>
                   </p>
+
+                  {r.assignedVendor && (
+                    <div className="mt-3 rounded-xl border border-emerald-100 bg-emerald-50/60 p-3">
+                      <p className="text-xs font-semibold uppercase tracking-wide text-emerald-700 inline-flex items-center gap-1.5">
+                        <BriefcaseBusiness size={13} /> Assigned Vendor
+                      </p>
+                      <div className="mt-1.5 text-xs text-gray-700 space-y-1">
+                        <p className="font-semibold text-gray-900">{r.assignedVendor.name}</p>
+                        <p className="inline-flex items-center gap-1"><Phone size={12} /> {r.assignedVendor.phone}</p>
+                        {r.assignedVendor.email && <p className="inline-flex items-center gap-1"><Mail size={12} /> {r.assignedVendor.email}</p>}
+                        {r.vendorAssignedAt && (
+                          <p className="text-[11px] text-gray-500">Assigned on {new Date(r.vendorAssignedAt).toLocaleDateString()}</p>
+                        )}
+                      </div>
+                    </div>
+                  )}
 
                   {r.photos?.length > 0 && (
                     <div className="pt-2">
